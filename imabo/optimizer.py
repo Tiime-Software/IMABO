@@ -62,6 +62,7 @@ class IMABO:
         switch_strategy: Literal["beta", "delayed"] = "beta",
         beta: float = 0.8,
         multivariate: bool = True,
+        use_tpe: bool = True,
         memory: Memory | None = None,
     ):
         """Initialize the IMABO optimizer.
@@ -81,6 +82,7 @@ class IMABO:
             switch_strategy: "beta" (synchronous) or "delayed" (asynchronous).
             beta: Switching exponent controlling exploration rate.
             multivariate: Whether to use multivariate Parzen estimation.
+            use_tpe: Whether to use TPE for exploration.
             memory: Custom memory backend (defaults to InMemoryStorage).
         """
         self.search_space_specs = search_space
@@ -90,7 +92,8 @@ class IMABO:
         self.distributions, self.param_types = create_search_space(search_space)
 
         self.memory: Memory = (
-            memory if memory is not None
+            memory
+            if memory is not None
             else InMemoryStorage(param_names=self.param_names)
         )
 
@@ -105,6 +108,7 @@ class IMABO:
         self.gamma_func = gamma_func or default_gamma
         self.weights_func = weights_func or default_weights
         self.multivariate = multivariate
+        self.use_tpe = use_tpe
 
         self.last_suggested: ArmConfig | None = None
 
@@ -132,14 +136,17 @@ class IMABO:
                 nb_rewarded_total
                 + self.memory.get_reward_frequency() * nb_pending_total
             )
-            explore = len(state.arms) < effective_t ** self.beta
+            explore = len(state.arms) < effective_t**self.beta
         else:
-            explore = len(state.arms) < state.nb_steps ** self.beta
+            explore = len(state.arms) < state.nb_steps**self.beta
 
         if explore:
-            x = self.suggest_new(
-                state, rewarded_arms, nb_pending_total, nb_rewarded_total
-            )
+            if not self.use_tpe:
+                x = self.generate_random_config()
+            else:
+                x = self.suggest_new(
+                    state, rewarded_arms, nb_pending_total, nb_rewarded_total
+                )
         else:
             x = self.suggest_existing(
                 state, rewarded_arms, nb_pending_total, nb_rewarded_total
@@ -216,23 +223,16 @@ class IMABO:
                 config[name] = self.rng.choice(dist.choices)
         return config
 
-    def get_rewarded_arms(
-        self, state: CurrentState
-    ) -> list[tuple[ArmKey, ArmStats]]:
+    def get_rewarded_arms(self, state: CurrentState) -> list[tuple[ArmKey, ArmStats]]:
         """Return the (key, stats) pairs of arms with at least one reward."""
         return [
-            (key, stats)
-            for key, stats in state.arms.items()
-            if stats.nb_rewarded > 0
+            (key, stats) for key, stats in state.arms.items() if stats.nb_rewarded > 0
         ]
 
     def get_undersampled_point(self, state: CurrentState) -> ArmConfig | None:
         """Return an unrewarded arm still below the pending budget, if any."""
         for key, stats in state.arms.items():
-            if (
-                stats.nb_rewarded == 0
-                and stats.nb_pending < self.max_nb_pending
-            ):
+            if stats.nb_rewarded == 0 and stats.nb_pending < self.max_nb_pending:
                 self.memory.pull_arm(key)
                 return key_to_config(key, self.param_names)
         return None
@@ -479,11 +479,10 @@ class FiniteIMABO(IMABO):
             self.last_suggested = undersampled
             return undersampled
 
-        threshold = state.nb_steps ** self.ef
+        threshold = state.nb_steps**self.ef
 
         all_saturated = len(rewarded_arms) > 0 and all(
-            stats.nb_rewarded >= self.max_pulls_per_config
-            for _, stats in rewarded_arms
+            stats.nb_rewarded >= self.max_pulls_per_config for _, stats in rewarded_arms
         )
 
         if len(rewarded_arms) < threshold or all_saturated:

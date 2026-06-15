@@ -1,0 +1,30 @@
+services:
+  dev:
+    build:
+      context: .
+    image: my-hpo:latest
+    container_name: my-hpo-dev
+    working_dir: /workspace
+    platform: linux/amd64
+    environment:
+      - QEMU_CPU=qemu64
+    privileged: true
+    volumes:
+      - .:/workspace
+    tty: true
+    stdin_open: true
+
+  hpo-server:
+    build:
+      context: .
+    image: my-hpo:latest
+    container_name: hpo-server
+    working_dir: /workspace
+    platform: linux/amd64
+    environment:
+      - QEMU_CPU=qemu64
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/workspace
+    command: bash -lc "source /etc/profile.d/conda.sh && conda activate hpo && python benchmarks/hpo_bench/server.py"

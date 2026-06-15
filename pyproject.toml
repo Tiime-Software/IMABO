@@ -25,12 +25,20 @@ dev = [
     "pytest>=7.0",
     "ruff",
 ]
+experiments = [
+    "matplotlib>=3.7",
+    "tqdm>=4.0",
+    "joblib>=1.2",
+    "aiohttp>=3.8",
+    "nest-asyncio>=1.5",
+]
 
 [project.urls]
 Repository = "https://github.com/Tiime-Software/IMABO"
 
 [tool.setuptools.packages.find]
-include = ["imabo*"]
+include = ["imabo*", "benchmarks*", "experiments*"]
+namespaces = true
 
 [tool.ruff]
 line-length = 100

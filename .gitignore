@@ -8,3 +8,7 @@ build/
 .ruff_cache/
 .env
 .DS_Store
+.cache/
+results/result_files/
+results/*.png
+results/*.pdf
