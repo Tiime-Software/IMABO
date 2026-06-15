@@ -9,6 +9,4 @@ build/
 .env
 .DS_Store
 .cache/
-results/result_files/
-results/*.png
-results/*.pdf
+results/

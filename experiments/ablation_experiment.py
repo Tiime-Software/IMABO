@@ -62,15 +62,13 @@ def run_single(
 
     if optimizer_type == "random_suggest":
         opt = IMABO(
-            search_space=search_space, seed=seed, multivariate=True, use_tpe=False
+            search_space=search_space, seed=seed, multivariate=False, use_tpe=False
         )
         suggest_fn = opt.suggest
         observe_fn = opt.observe
         best_x_fn = lambda: opt.best_x  # noqa: E731
     elif optimizer_type == "imabo":
-        opt = IMABO(
-            search_space=search_space, seed=seed, multivariate=True, use_tpe=True
-        )
+        opt = IMABO(search_space=search_space, seed=seed, multivariate=False)
         suggest_fn = opt.suggest
         observe_fn = opt.observe
         best_x_fn = lambda: opt.best_x  # noqa: E731
@@ -125,7 +123,6 @@ def run_experiment(
 def run_tpe_ablation(
     n_runs: int = TPE_N_RUNS,
     base_seed: int = 42,
-    save_fig: bool = False,
 ):
     """IMABO vs Random across dimensions, one plot per function."""
     algorithms = ["Random", "IMABO"]
@@ -144,14 +141,6 @@ def run_tpe_ablation(
 
         save_results_to_csv(
             results_dict, fn, exp_type="tpe_ablation", result_dir=RESULT_DIR
-        )
-        plot_dimension_comparison(
-            results_dict,
-            algorithms,
-            list(results_dict.keys()),
-            fn,
-            save_fig=save_fig,
-            exp_type="tpe_ablation",
         )
 
 
@@ -224,13 +213,6 @@ def _save_k_results(results: dict, function_name: str) -> None:
         writer.writerows(summary_rows)
     print(f"  Saved {summary_path}")
 
-    iter_path = RESULT_DIR / f"k_ablation_{function_name}_iterations.csv"
-    with open(iter_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=iter_rows[0].keys())
-        writer.writeheader()
-        writer.writerows(iter_rows)
-    print(f"  Saved {iter_path}")
-
     # Save iterations CSV
     iter_rows = []
     for alg, data in results.items():
@@ -261,10 +243,8 @@ def _save_k_results(results: dict, function_name: str) -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    SAVE_FIG = True
+    print("=== Sub-experiment 1: TPE oracle impact ===")
+    run_tpe_ablation()
 
-    # print("=== Sub-experiment 1: TPE oracle impact ===")
-    # run_tpe_ablation(save_fig=SAVE_FIG)
-
-    print("\n=== Sub-experiment 2: MOSS oracle / k impact ===")
-    run_k_ablation(n_runs=1, save_fig=SAVE_FIG)
+    # print("\n=== Sub-experiment 2: MOSS oracle / k impact ===")
+    # run_k_ablation(save_fig=SAVE_FIG)
