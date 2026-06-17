@@ -24,9 +24,13 @@ from typing import TypedDict
 
 from tqdm import tqdm
 
-from benchmarks.config import BENCHMARKS
-from benchmarks.hpo_bench.client import api_call, start_hpo_server, stop_hpo_server
-from benchmarks.hpo_wrapper import HPOBenchmark
+from experiments.benchmarks.config import BENCHMARKS
+from experiments.benchmarks.hpo_bench.client import (
+    api_call,
+    start_hpo_server,
+    stop_hpo_server,
+)
+from experiments.benchmarks.hpo_wrapper import HPOBenchmark
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.utils.stats import calculate_statistics
 from imabo import IMABO
@@ -232,7 +236,6 @@ async def main():
                     results_dict[keys[i]] = calculate_statistics(all_results)
 
             if results_dict:
-                algorithms_names = [algo.value for algo in Algorithm]
                 save_results_to_csv(results_dict, benchmark, exp_type="hpo")
                 save_iterations_to_csv(results_dict, benchmark, exp_type="hpo")
     finally:

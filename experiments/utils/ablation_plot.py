@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from utils.plot_functions import (
+from experiments.utils.plot_configs import (
     ALGORITHM_COLORS,
 )
 

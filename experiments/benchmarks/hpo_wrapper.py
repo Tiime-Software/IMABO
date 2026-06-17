@@ -1,4 +1,4 @@
-from benchmarks.config import BENCHMARKS
+from experiments.benchmarks.config import BENCHMARKS
 from typing import Any
 import math
 import numpy as np
@@ -6,7 +6,7 @@ import random
 from pathlib import Path
 from joblib import Memory
 
-from benchmarks.hpo_bench.client import api_call
+from experiments.benchmarks.hpo_bench.client import api_call
 
 import logging
 
@@ -14,7 +14,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("hpo_wrapper")
 
 
-def convert_numpy_to_python(x: dict[str, Any], param_specs: dict[str, Any]) -> dict[str, Any]:
+def convert_numpy_to_python(
+    x: dict[str, Any], param_specs: dict[str, Any]
+) -> dict[str, Any]:
     """Convert numpy scalar values in a config dict to plain Python types."""
     converted: dict[str, Any] = {}
     for name, value in x.items():
@@ -30,6 +32,8 @@ def convert_numpy_to_python(x: dict[str, Any], param_specs: dict[str, Any]) -> d
         else:
             converted[name] = float(value)
     return converted
+
+
 location = Path(__file__).parent.parent / ".cache"
 memory = Memory(location=location, verbose=0)
 
@@ -63,7 +67,6 @@ class HPOBenchmark:
 
         self.param_specs = info["param_specs"]
         self.param_names = list(sorted(self.param_specs.keys()))
-        # self.domain: list[tuple[float, float]] = self._build_domain()
         self.config_cache: dict[tuple, float] = {}
 
         self.fidelity = benchmark_info.get("fidelity", {})

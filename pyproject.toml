@@ -37,7 +37,7 @@ experiments = [
 Repository = "https://github.com/Tiime-Software/IMABO"
 
 [tool.setuptools.packages.find]
-include = ["imabo*", "benchmarks*", "experiments*"]
+include = ["imabo*", "experiments*"]
 namespaces = true
 
 [tool.ruff]

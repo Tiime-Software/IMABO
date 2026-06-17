@@ -17,12 +17,8 @@ from typing import Literal
 
 from tqdm import tqdm
 
-from benchmarks.toys.toy_functions import ObjectiveFunctions
+from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.optuna_bandit import OptunaBandit
-from experiments.utils.plot_functions import (
-    plot_dimension_comparison,
-    plot_k_experiment,
-)
 from experiments.utils.stats import calculate_statistics, save_results_to_csv
 from imabo import IMABO
 
@@ -240,11 +236,9 @@ def _save_k_results(results: dict, function_name: str) -> None:
     print(f"  Saved {iter_path}")
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     print("=== Sub-experiment 1: TPE oracle impact ===")
     run_tpe_ablation()
 
-    # print("\n=== Sub-experiment 2: MOSS oracle / k impact ===")
-    # run_k_ablation(save_fig=SAVE_FIG)
+    print("\n=== Sub-experiment 2: MOSS oracle / k impact ===")
+    run_k_ablation()

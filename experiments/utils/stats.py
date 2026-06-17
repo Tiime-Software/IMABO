@@ -82,6 +82,9 @@ def save_results_to_csv(
                     "simple_regret_std": data["simple_regrets"]["std"],
                     "total_regret_mean": float(data["regrets"]["sum_regrets"].mean()),
                     "total_regret_std": float(data["regrets"]["sum_regrets"].std()),
+                    "simple_regrets": str(data["simple_regrets"]["simple_regrets"]),
+                    "sum_regrets": str(data["regrets"]["sum_regrets"]),
+                    "cov_regrets": str(data["cov"]),
                 }
             )
 

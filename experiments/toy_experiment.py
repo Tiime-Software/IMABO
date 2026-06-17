@@ -9,16 +9,10 @@ from enum import Enum
 from pathlib import Path
 from typing import TypedDict
 
-import numpy as np
 from tqdm import tqdm
 
-from benchmarks.toys.toy_functions import ObjectiveFunctions
+from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
-from experiments.utils.plot_functions import (
-    plot_cumulative_regrets,
-    plot_trajectories,
-    plot_trajectories_with_confidence_ellipses,
-)
 from experiments.utils.stats import (
     calculate_statistics,
     save_iterations_to_csv,
@@ -109,7 +103,6 @@ def run_multiple_experiments(
 
 
 if __name__ == "__main__":
-    save_fig = False
     function_name = ["sin1", "garland", "rastrigin"]
     dim = 4
     n_runs = 20
@@ -134,37 +127,5 @@ if __name__ == "__main__":
                 fn, d, n_iter, n_runs=n_runs, base_seed=base_seed
             )
             results_dict[keys[i]] = calculate_statistics(all_results)
-
-        plot_trajectories_with_confidence_ellipses(
-            results_dict,
-            algorithms_names,
-            n_evals,
-            keys,
-            function_name,
-            save_fig=save_fig,
-            exp_type="toy",
-        )
-        plot_trajectories(
-            results_dict,
-            algorithms_names,
-            n_evals,
-            keys,
-            function_name,
-            save_fig=save_fig,
-            exp_type="toy",
-        )
-        plot_cumulative_regrets(
-            results_dict,
-            algorithms_names,
-            n_evals,
-            keys,
-            function_name,
-            save_fig=save_fig,
-            exp_type="toy",
-        )
-        save_results_to_csv(
-            results_dict, function_name, exp_type="toy", result_dir=RESULT_DIR
-        )
-        save_iterations_to_csv(
-            results_dict, function_name, exp_type="toy", result_dir=RESULT_DIR
-        )
+        save_results_to_csv(results_dict, fn, exp_type="toy", result_dir=RESULT_DIR)
+        save_iterations_to_csv(results_dict, fn, exp_type="toy", result_dir=RESULT_DIR)

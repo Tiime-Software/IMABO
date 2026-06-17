@@ -5,7 +5,7 @@ from pathlib import Path
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 
-from utils.plot_functions import (
+from experiments.utils.plot_configs import (
     set_research_style,
     get_algorithm_color,
     RESEARCH_COLORS,
@@ -64,7 +64,7 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
     """
     Plot performance trajectories showing simple regret vs cumulative regret (total regret).
     Each algorithm gets a line connecting points for different evaluation budgets.
-    Inspired by plot_trajectories from plot_functions.py
+    Inspired by plot_trajectories from plot_configs.py
 
     Args:
         benchmark: Name of the benchmark (e.g., 'lr', 'svm', 'rf')
@@ -598,204 +598,9 @@ def plot_combined_regrets(
     plt.show()
 
 
-def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
-    """
-    Plot performance trajectories with confidence ellipses for multiple benchmarks as subplots.
-
-    Args:
-        benchmarks: List of benchmark names (e.g., ['sin1', 'garland', 'rastrigin'])
-        save_fig: Whether to save the figure
-        exp_type: Experiment type for filename
-    """
-    n_benchmarks = len(benchmarks)
-    fig, axes = plt.subplots(1, n_benchmarks, figsize=(8 * n_benchmarks, 8))
-
-    # Make axes iterable even if single subplot
-    if n_benchmarks == 1:
-        axes = [axes]
-
-    for ax_idx, benchmark in enumerate(benchmarks):
-        ax = axes[ax_idx]
-
-        # Read summary CSV
-        csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_summary.csv"
-        df = pd.read_csv(csv_file)
-
-        # Check if we have raw data arrays for confidence ellipses
-        has_raw_data = "simple_regrets" in df.columns and "sum_regrets" in df.columns
-
-        # Get unique algorithms and iterations
-        algorithms = df["algorithm"].unique().tolist()
-        n_evals = sorted(df["n_iterations"].unique())
-
-        # Markers for each algorithm
-        base_markers = ["o", "s", "^", "D", "v", "<", ">", "p"]
-        markers = [base_markers[i % len(base_markers)] for i in range(len(algorithms))]
-
-        # Collect all data points and build trajectories
-        all_xs, all_ys = [], []
-        trajectories = {}
-
-        for i, algorithm in enumerate(algorithms):
-            algo_data = df[df["algorithm"] == algorithm].sort_values("n_iterations")
-
-            simple_regrets = algo_data["simple_regret_mean"].values
-            total_regrets = algo_data["total_regret_mean"].values
-
-            trajectories[algorithm] = (simple_regrets, total_regrets)
-            all_xs.extend(simple_regrets)
-            all_ys.extend(total_regrets)
-
-        # Calculate median lines for quadrants
-        x_min, x_max = min(all_xs), max(all_xs)
-        y_min, y_max = min(all_ys), max(all_ys)
-        x_mid = (x_min + x_max) / 2
-        y_mid = (y_min + y_max) / 2
-
-        # Draw median lines
-        ax.axhline(
-            y=y_mid,
-            color=RESEARCH_COLORS["neutral"],
-            linestyle=":",
-            alpha=0.4,
-            linewidth=1,
-        )
-        ax.axvline(
-            x=x_mid,
-            color=RESEARCH_COLORS["neutral"],
-            linestyle=":",
-            alpha=0.4,
-            linewidth=1,
-        )
-
-        # # Set axis limits with padding
-        # x_padding = (x_max - x_min) * 0.05
-        # y_padding = (y_max - y_min) * 0.05
-        # y_start_padding = y_max * 0.02
-        # ax.set_xlim(0, x_max + x_padding)
-        # ax.set_ylim(-y_start_padding, y_max + y_padding)
-
-        # Plot trajectories for each algorithm
-        for i, algorithm in enumerate(algorithms):
-            algo_data = df[df["algorithm"] == algorithm].sort_values("n_iterations")
-
-            xs = algo_data["simple_regret_mean"].values
-            ys = algo_data["total_regret_mean"].values
-
-            color = get_algorithm_color(i)
-
-            # Draw confidence ellipses if raw data available
-            if has_raw_data:
-                for j, row in algo_data.iterrows():
-                    # Parse array strings to numpy arrays
-                    simple_regrets_raw = np.fromstring(
-                        row["simple_regrets"].strip("[]"), sep=" "
-                    )
-                    sum_regrets_raw = np.fromstring(
-                        row["sum_regrets"].strip("[]"), sep=" "
-                    )
-                    if len(simple_regrets_raw) > 2 and len(sum_regrets_raw) > 2:
-                        confidence_ellipse(
-                            simple_regrets_raw,
-                            sum_regrets_raw,
-                            ax,
-                            n_std=1.0,
-                            alpha=0.15,
-                            facecolor=color,
-                            edgecolor=color,
-                            linewidth=1.5,
-                            zorder=2,
-                        )
-
-                        # Draw individual run points
-                        ax.scatter(
-                            simple_regrets_raw,
-                            sum_regrets_raw,
-                            c=color,
-                            alpha=0.25,
-                            s=15,
-                            edgecolors="white",
-                            linewidths=0.5,
-                            zorder=3,
-                        )
-
-            # Draw trajectory lines with increasing alpha
-            for j in range(len(xs) - 1):
-                alpha = 0.4 + 0.2 * (j / (len(xs) - 1))
-                ax.plot(
-                    [xs[j], xs[j + 1]],
-                    [ys[j], ys[j + 1]],
-                    color=color,
-                    linewidth=3,
-                    alpha=alpha,
-                )
-
-            # Draw scatter points with increasing size
-            sizes = np.linspace(60, 120, len(xs))
-            ax.scatter(
-                xs,
-                ys,
-                c=color,
-                s=sizes,
-                marker=markers[i],
-                alpha=0.8,
-                edgecolors="white",
-                linewidths=2,
-                label=algorithm if ax_idx == 0 else "",  # Only label once
-                zorder=5,
-            )
-
-        # Labels and title
-        ax.set_xlabel("Simple Regret", fontweight="bold", fontsize=22)
-        if ax_idx == 0:
-            ax.set_ylabel("Cumulative Regret", fontweight="bold", fontsize=22)
-        ax.set_title(benchmark.upper(), fontweight="bold", fontsize=24, pad=15)
-
-        ax.tick_params(axis="both", which="major", labelsize=30)
-        ax.set_axisbelow(True)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-    # Create common legend
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.05),
-        ncol=len(algorithms),
-        frameon=False,
-        prop={"size": 30, "family": "serif", "weight": "bold"},
-    )
-
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-
-    if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        filename = "_".join(benchmarks)
-        plt.savefig(
-            output_dir / f"{filename}_trajectories_comparison_{exp_type}.pdf",
-            bbox_inches="tight",
-        )
-        print(
-            f"Saved to {output_dir / f'{filename}_trajectories_comparison_{exp_type}.pdf'}"
-        )
-
-    plt.show()
-
-
 if __name__ == "__main__":
-    # Test all plotting functions
-    exp_type = "hpo"
-
     for benchmark in ["lr", "svm"]:
-        exp_type = "hpo"
         print(f"Generating combined regrets plot for {benchmark.upper()}...")
         plot_combined_regrets(
-            benchmark=benchmark, n_iterations=10000, save_fig=True, exp_type=exp_type
+            benchmark=benchmark, n_iterations=10000, save_fig=True, exp_type="hpo"
         )
-
-    # # print("\n3. Generating multiple trajectories comparison...")
-    benchmarks = ["sin1", "garland", "rastrigin"]
-    plot_multiple_trajectories(benchmarks=benchmarks, save_fig=True, exp_type=exp_type)
