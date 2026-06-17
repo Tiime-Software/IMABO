@@ -110,36 +110,61 @@ def run_multiple_experiments(
 
 if __name__ == "__main__":
     save_fig = False
-    function_name = "sin1"
-    dim = 1
-    n_runs = 5
+    function_name = ["sin1", "garland", "rastrigin"]
+    dim = 4
+    n_runs = 20
     base_seed = 42
 
-    test_cases = [
-        (function_name, dim, 1000),
-        (function_name, dim, 3000),
-    ]
+    for fn in function_name:
+        print(f"Running {fn}...")
+        test_cases = [
+            (fn, dim, 1000),
+            (fn, dim, 3000),
+            (fn, dim, 5000),
+            (fn, dim, 10000),
+        ]
 
-    algorithms_names = [algo.value for algo in Algorithm]
-    n_evals = [tc[2] for tc in test_cases]
-    keys = [f"{fn}_{d}D_{n}" for fn, d, n in test_cases]
-    results_dict = {}
+        algorithms_names = [algo.value for algo in Algorithm]
+        n_evals = [tc[2] for tc in test_cases]
+        keys = [f"{fn}_{d}D_{n}" for fn, d, n in test_cases]
+        results_dict = {}
 
-    for i, (fn, d, n_iter) in enumerate(tqdm(test_cases, desc="Test cases")):
-        all_results = run_multiple_experiments(fn, d, n_iter, n_runs=n_runs, base_seed=base_seed)
-        results_dict[keys[i]] = calculate_statistics(all_results)
+        for i, (fn, d, n_iter) in enumerate(tqdm(test_cases, desc="Test cases")):
+            all_results = run_multiple_experiments(
+                fn, d, n_iter, n_runs=n_runs, base_seed=base_seed
+            )
+            results_dict[keys[i]] = calculate_statistics(all_results)
 
-    plot_trajectories_with_confidence_ellipses(
-        results_dict, algorithms_names, n_evals, keys, function_name,
-        save_fig=save_fig, exp_type="toy",
-    )
-    plot_trajectories(
-        results_dict, algorithms_names, n_evals, keys, function_name,
-        save_fig=save_fig, exp_type="toy",
-    )
-    plot_cumulative_regrets(
-        results_dict, algorithms_names, n_evals, keys, function_name,
-        save_fig=save_fig, exp_type="toy",
-    )
-    save_results_to_csv(results_dict, function_name, exp_type="toy", result_dir=RESULT_DIR)
-    save_iterations_to_csv(results_dict, function_name, exp_type="toy", result_dir=RESULT_DIR)
+        plot_trajectories_with_confidence_ellipses(
+            results_dict,
+            algorithms_names,
+            n_evals,
+            keys,
+            function_name,
+            save_fig=save_fig,
+            exp_type="toy",
+        )
+        plot_trajectories(
+            results_dict,
+            algorithms_names,
+            n_evals,
+            keys,
+            function_name,
+            save_fig=save_fig,
+            exp_type="toy",
+        )
+        plot_cumulative_regrets(
+            results_dict,
+            algorithms_names,
+            n_evals,
+            keys,
+            function_name,
+            save_fig=save_fig,
+            exp_type="toy",
+        )
+        save_results_to_csv(
+            results_dict, function_name, exp_type="toy", result_dir=RESULT_DIR
+        )
+        save_iterations_to_csv(
+            results_dict, function_name, exp_type="toy", result_dir=RESULT_DIR
+        )

@@ -28,11 +28,6 @@ from benchmarks.config import BENCHMARKS
 from benchmarks.hpo_bench.client import api_call, start_hpo_server, stop_hpo_server
 from benchmarks.hpo_wrapper import HPOBenchmark
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
-from experiments.utils.plot_functions import (
-    plot_cumulative_regrets,
-    plot_trajectories,
-    plot_trajectories_with_confidence_ellipses,
-)
 from experiments.utils.stats import calculate_statistics
 from imabo import IMABO
 
@@ -97,7 +92,9 @@ async def run_single_experiment(
             result = await benchmark_obj.eval_config(eval_config)
             reward = result.get("sample_result", float("-inf"))
             # Regret = 1 - val_acc (minimisation of error)
-            regrets[opt_name]["regrets"].append(1.0 - result.get("avg_result", float("-inf")))
+            regrets[opt_name]["regrets"].append(
+                1.0 - result.get("avg_result", float("-inf"))
+            )
 
             if is_tree:
                 opt.observe(x, reward)
@@ -118,13 +115,20 @@ async def run_multiple_experiments(
     n_runs: int = 20,
     base_seed: int = 42,
 ) -> list[dict[str, RegretData]]:
-    return [
-        await run_single_experiment(benchmark, n_iterations, seed=base_seed + i)
-        for i in range(n_runs)
-    ]
+    """Run multiple independent runs of the experiment."""
+    results = []
+    for i in tqdm(
+        range(n_runs), desc=f"  {benchmark} {n_iterations} runs", leave=False
+    ):
+        results.append(
+            await run_single_experiment(benchmark, n_iterations, seed=base_seed + i)
+        )
+    return results
 
 
-def save_results_to_csv(results_dict: dict, benchmark: str, exp_type: str = "hpo") -> None:
+def save_results_to_csv(
+    results_dict: dict, benchmark: str, exp_type: str = "hpo"
+) -> None:
     summary_rows = []
     for key, stats in results_dict.items():
         parts = key.split("_")
@@ -153,7 +157,9 @@ def save_results_to_csv(results_dict: dict, benchmark: str, exp_type: str = "hpo
     print(f"Summary saved to {path}")
 
 
-def save_iterations_to_csv(results_dict: dict, benchmark: str, exp_type: str = "hpo") -> None:
+def save_iterations_to_csv(
+    results_dict: dict, benchmark: str, exp_type: str = "hpo"
+) -> None:
     rows = []
     for key, stats in results_dict.items():
         parts = key.split("_")
@@ -188,7 +194,6 @@ async def main():
     benchmarks_to_run = ["lr", "svm"]
     n_runs = 20
     base_seed = 42
-    save_fig = False
 
     test_cases_per_benchmark = [
         (10000,),
@@ -228,18 +233,6 @@ async def main():
 
             if results_dict:
                 algorithms_names = [algo.value for algo in Algorithm]
-                plot_trajectories_with_confidence_ellipses(
-                    results_dict, algorithms_names, n_evals, keys,
-                    benchmark, save_fig=save_fig, exp_type="hpo",
-                )
-                plot_trajectories(
-                    results_dict, algorithms_names, n_evals, keys,
-                    benchmark, save_fig=save_fig, exp_type="hpo",
-                )
-                plot_cumulative_regrets(
-                    results_dict, algorithms_names, n_evals, keys,
-                    benchmark, save_fig=save_fig, exp_type="hpo",
-                )
                 save_results_to_csv(results_dict, benchmark, exp_type="hpo")
                 save_iterations_to_csv(results_dict, benchmark, exp_type="hpo")
     finally:
@@ -248,5 +241,6 @@ async def main():
 
 if __name__ == "__main__":
     import nest_asyncio
+
     nest_asyncio.apply()
     asyncio.run(main())
