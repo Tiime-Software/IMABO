@@ -46,7 +46,7 @@ print(f"Best config: {optimizer.best_config}")
 
 IMABO maintains a growing set of configurations M_t and alternates between two oracles:
 
-1. **TPE Oracle** (exploration): proposes new configurations by fitting Parzen estimators on good/bad arms and maximizing $\frac{l(x)}/{g(x)}$.
+1. **TPE Oracle** (exploration): proposes new configurations by fitting Parzen estimators on good/bad arms and maximizing $\frac{l(x)}{g(x)}$.
 2. **MOSS Oracle** (exploitation): selects the best existing arm using the minimax-optimal anytime MOSS index.
 
 The switching rule is controlled by a parameter beta in (0, 1):
