@@ -1,3 +1,7 @@
+"""
+Plots for toy benchmark experiment results (experiments/toy_experiment.py).
+"""
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -90,8 +94,20 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
         x_mid = (min(all_xs) + max(all_xs)) / 2
         y_mid = (min(all_ys) + max(all_ys)) / 2
 
-        ax.axhline(y=y_mid, color=RESEARCH_COLORS["neutral"], linestyle=":", alpha=0.4, linewidth=1)
-        ax.axvline(x=x_mid, color=RESEARCH_COLORS["neutral"], linestyle=":", alpha=0.4, linewidth=1)
+        ax.axhline(
+            y=y_mid,
+            color=RESEARCH_COLORS["neutral"],
+            linestyle=":",
+            alpha=0.4,
+            linewidth=1,
+        )
+        ax.axvline(
+            x=x_mid,
+            color=RESEARCH_COLORS["neutral"],
+            linestyle=":",
+            alpha=0.4,
+            linewidth=1,
+        )
 
         for i, algorithm in enumerate(algorithms):
             algo_data = df[df["algorithm"] == algorithm].sort_values("n_iterations")
@@ -109,27 +125,47 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                     )
                     if len(simple_regrets_raw) > 2 and len(sum_regrets_raw) > 2:
                         confidence_ellipse(
-                            simple_regrets_raw, sum_regrets_raw, ax,
-                            n_std=1.0, alpha=0.15, facecolor=color,
-                            edgecolor=color, linewidth=1.5, zorder=2,
+                            simple_regrets_raw,
+                            sum_regrets_raw,
+                            ax,
+                            n_std=1.0,
+                            alpha=0.15,
+                            facecolor=color,
+                            edgecolor=color,
+                            linewidth=1.5,
+                            zorder=2,
                         )
                         ax.scatter(
-                            simple_regrets_raw, sum_regrets_raw,
-                            c=color, alpha=0.25, s=15,
-                            edgecolors="white", linewidths=0.5, zorder=3,
+                            simple_regrets_raw,
+                            sum_regrets_raw,
+                            c=color,
+                            alpha=0.25,
+                            s=15,
+                            edgecolors="white",
+                            linewidths=0.5,
+                            zorder=3,
                         )
 
             for j in range(len(xs) - 1):
                 alpha = 0.4 + 0.2 * (j / (len(xs) - 1))
                 ax.plot(
-                    [xs[j], xs[j + 1]], [ys[j], ys[j + 1]],
-                    color=color, linewidth=3, alpha=alpha,
+                    [xs[j], xs[j + 1]],
+                    [ys[j], ys[j + 1]],
+                    color=color,
+                    linewidth=3,
+                    alpha=alpha,
                 )
 
             sizes = np.linspace(60, 120, len(xs))
             ax.scatter(
-                xs, ys, c=color, s=sizes, marker=markers[i],
-                alpha=0.8, edgecolors="white", linewidths=2,
+                xs,
+                ys,
+                c=color,
+                s=sizes,
+                marker=markers[i],
+                alpha=0.8,
+                edgecolors="white",
+                linewidths=2,
                 label=algorithm if ax_idx == 0 else "",
                 zorder=5,
             )
@@ -145,7 +181,8 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
-        handles, labels,
+        handles,
+        labels,
         loc="upper center",
         bbox_to_anchor=(0.5, 1.05),
         ncol=len(algorithms),
@@ -163,7 +200,9 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
             output_dir / f"{filename}_trajectories_comparison_{exp_type}.pdf",
             bbox_inches="tight",
         )
-        print(f"Saved to {output_dir / f'{filename}_trajectories_comparison_{exp_type}.pdf'}")
+        print(
+            f"Saved to {output_dir / f'{filename}_trajectories_comparison_{exp_type}.pdf'}"
+        )
 
     plt.show()
 

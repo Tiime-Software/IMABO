@@ -8,7 +8,6 @@ TimedOptimizer wraps any such generator into the standard suggest/observe interf
 """
 
 import random
-import warnings
 from collections import defaultdict
 from collections.abc import Callable, Generator
 from dataclasses import dataclass

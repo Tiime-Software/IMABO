@@ -1,3 +1,7 @@
+"""
+Plots for ablation study results (experiments/ablation_experiment.py).
+"""
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -56,8 +60,6 @@ def plot_cumulative_regrets_k_experiment(save_fig=False):
             mean_regrets = algo_data["regret_mean"].values
             std_regrets = algo_data["regret_std"].values
 
-            # Calculate cumulative mean regret
-            # cumulative_mean = np.cumsum(mean_regrets)
             cumulative_mean = np.cumsum(mean_regrets) / np.arange(
                 1, len(mean_regrets) + 1
             )
@@ -104,12 +106,6 @@ def plot_cumulative_regrets_k_experiment(save_fig=False):
         prop={"size": 22, "family": "serif", "weight": "bold"},
     )
 
-    # plt.suptitle(
-    #     "Cumulative Regret Comparison Across Different k Values",
-    #     fontsize=20,
-    #     fontweight="bold",
-    #     y=1.08,
-    # )
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if save_fig:
@@ -166,12 +162,10 @@ def plot_simple_regret_k_experiment(save_fig=False):
         ax.set_xticklabels(x_labels, rotation=45, ha="right", fontsize=22)
         if idx == 0:
             ax.set_ylabel("Simple Regret", fontweight="bold", fontsize=22)
-        # ax.set_xlabel("Setting", fontweight="bold", fontsize=18)
         ax.set_title(f"{func.capitalize()}", fontweight="bold", fontsize=22)
         ax.tick_params(axis="y", which="major", labelsize=22)
         ax.set_axisbelow(True)
         ax.grid(True, alpha=0.3)
-        # ax.set_yscale("log")
 
     plt.tight_layout()
 

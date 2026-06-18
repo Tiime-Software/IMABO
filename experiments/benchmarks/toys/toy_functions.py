@@ -65,21 +65,18 @@ class ObjectiveFunctions:
         """Sum of sin1_1d over all dimensions."""
         coords = self._parse_input(x)[: self.dim]
         result = sum(self.sin1_1d(xi) for xi in coords)
-        result = result
         return self._add_noise(result) if noise else result
 
     def garland(self, x, noise=True):
         """Sum of garland_1d over all dimensions."""
         coords = self._parse_input(x)[: self.dim]
         result = sum(self.garland_1d(xi) for xi in coords)
-        result = result
         return self._add_noise(result) if noise else result
 
     def quadratic(self, x, noise=True):
         """Sum of squared deviations from center (0.5)."""
         coords = self._parse_input(x)[: self.dim]
         result = -sum((xi - 0.5) ** 2 for xi in coords)
-        result = result
         return self._add_noise(result) if noise else result
 
     def rosenbrock(self, x, noise=True):
@@ -87,13 +84,11 @@ class ObjectiveFunctions:
         coords = self._parse_input(x)[: self.dim]
         if len(coords) < 2:
             result = self.rosenbrock_1d(coords[0])
-            result = result
             return self._add_noise(result) if noise else result
 
         result = 0
         for i in range(len(coords) - 1):
             result -= 100 * (coords[i + 1] - coords[i] ** 2) ** 2 + (1 - coords[i]) ** 2
-        result = result
         return self._add_noise(result) if noise else result
 
     def rastrigin(self, x, noise=True):
@@ -102,7 +97,6 @@ class ObjectiveFunctions:
         A = 10
         n = len(coords)
         result = -(A * n + sum(xi**2 - A * np.cos(2 * np.pi * xi) for xi in coords))
-        result = result
         return self._add_noise(result) if noise else result
 
     # Function properties

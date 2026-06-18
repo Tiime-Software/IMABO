@@ -1,3 +1,7 @@
+"""
+Plots for real HPO benchmark experiment results (experiments/hpo_experiment.py).
+"""
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -64,7 +68,6 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
     """
     Plot performance trajectories showing simple regret vs cumulative regret (total regret).
     Each algorithm gets a line connecting points for different evaluation budgets.
-    Inspired by plot_trajectories from plot_configs.py
 
     Args:
         benchmark: Name of the benchmark (e.g., 'lr', 'svm', 'rf')
@@ -282,7 +285,6 @@ def plot_cumulative_regret_over_iterations(
 ):
     """
     Plot cumulative regret over iterations for all algorithms at a specific iteration budget.
-    Inspired by plot_cumulative_regrets_k_experiment from ablation_plot.py
 
     Args:
         benchmark: Name of the benchmark (e.g., 'lr', 'svm', 'rf')
@@ -449,9 +451,6 @@ def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="h
     # Remove top and right spines
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-
-    # Optional: set log scale for y-axis if values vary significantly
-    # ax.set_yscale('log')
 
     plt.tight_layout()
 
