@@ -28,6 +28,7 @@ Noise model (``--sigma``):
 
 Usage: python -m experiments.dttts_compare [n_iter] [n_runs] [out.json] [sigma]
 """
+
 import json
 import sys
 from pathlib import Path
@@ -38,7 +39,10 @@ from joblib import Parallel, delayed
 from experiments.baselines.dttts import DTTTS
 from experiments.baselines.random_search import RandomSearch
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
+from experiments.baselines.optuna_bandit import OptunaBandit
 from imabo import IMABO
+
+RESULTS_FILE = Path(__file__).parents[2] / "dttts_compare_results.json"
 
 
 def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
@@ -69,15 +73,27 @@ def make_optimizer(name, ss, seed, check_range=True):
     # the same normalised reward and needs no [0,1] assumption.  With explicit
     # additive noise (sigma set) the range check is bypassed.
     if name == "IMABO (TPE oracle)":
-        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=True,
-                     check_reward_range=check_range)
+        return IMABO(
+            search_space=ss,
+            seed=seed,
+            multivariate=True,
+            use_tpe=True,
+            check_reward_range=check_range,
+        )
     if name == "IMABO (no oracle)":
-        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False,
-                     check_reward_range=check_range)
+        return IMABO(
+            search_space=ss,
+            seed=seed,
+            multivariate=True,
+            use_tpe=False,
+            check_reward_range=check_range,
+        )
     if name == "D-TTTS":
         return DTTTS(search_space=ss, reward_low=0.0, reward_high=1.0, seed=seed)
     if name == "Random":
         return RandomSearch(search_space=ss, seed=seed)
+    if name == "TPE":
+        return OptunaBandit(search_space=ss, seed=seed, k=10)
     raise ValueError(name)
 
 
@@ -89,12 +105,13 @@ RUN_ALGOS = ALGOS = [
     "IMABO (no oracle)",
     "D-TTTS",
     "Random",
+    "TPE",
 ]
 
 
 def one_run(function_name, dim, n_iter, seed, bounds, sigma=None):
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
-    func = obj.get_function_by_name(function_name)          # built-in noise
+    func = obj.get_function_by_name(function_name)  # built-in noise
     fn0 = obj.get_function_by_name(function_name, noise=False)
     fmax = obj.get_theoretical_max(function_name)
     ss = obj.get_search_space(function_name)
@@ -114,13 +131,15 @@ def one_run(function_name, dim, n_iter, seed, bounds, sigma=None):
         for i in range(n_iter):
             x = opt.suggest()
             if sigma is None:
-                reward = norm(func(x))                       # toy's built-in noise, normalised
+                reward = norm(func(x))  # toy's built-in noise, normalised
             else:
-                reward = norm(fn0(x)) + noise_rng.normal(0.0, sigma)  # explicit [0,1] noise
+                reward = norm(fn0(x)) + noise_rng.normal(
+                    0.0, sigma
+                )  # explicit [0,1] noise
             opt.observe(reward)
             # normalised per-round regret in [0,1], scored on the noiseless f
             regrets[i] = fmax_total_norm - norm(fn0(x))
-        bx = opt.best_config
+        bx = opt.best_config if name != "TPE" else opt.suggest_best()
         sr = fmax_total_norm - norm(fn0(bx))
         out[name] = {"regrets": regrets, "simple_regret": float(sr)}
     return out
@@ -128,9 +147,12 @@ def one_run(function_name, dim, n_iter, seed, bounds, sigma=None):
 
 def main():
     dim = 4
-    n_iter = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
-    n_runs = int(sys.argv[2]) if len(sys.argv) > 2 else 16
-    sigma = float(sys.argv[4]) if len(sys.argv) > 4 else None  # None => toy built-in noise
+    n_iter = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
+    n_runs = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+    # sigma = (
+    #     float(sys.argv[4]) if len(sys.argv) > 4 else None
+    # )  # None => toy built-in noise
+    sigma = 0.1
     functions = ["sin1", "garland", "rastrigin"]
     base_seed = 42
 
@@ -144,9 +166,9 @@ def main():
         # aggregate
         agg = {}
         for name in ALGOS:
-            R = np.stack([run[name]["regrets"] for run in runs])          # (runs, T)
-            SR = np.array([run[name]["simple_regret"] for run in runs])   # (runs,)
-            cum = R.cumsum(axis=1)                                        # (runs, T)
+            R = np.stack([run[name]["regrets"] for run in runs])  # (runs, T)
+            SR = np.array([run[name]["simple_regret"] for run in runs])  # (runs,)
+            cum = R.cumsum(axis=1)  # (runs, T)
             agg[name] = {
                 "mean_cum_regret": cum.mean(axis=0).tolist(),
                 "std_cum_regret": cum.std(axis=0).tolist(),
@@ -157,15 +179,27 @@ def main():
                 "simple_regret_all": SR.tolist(),
             }
         results[fn] = agg
-        print(f"[{fn}] done" + (f" (sigma={sigma})" if sigma is not None else " (built-in noise)"))
+        print(
+            f"[{fn}] done"
+            + (f" (sigma={sigma})" if sigma is not None else " (built-in noise)")
+        )
         for name in ALGOS:
             a = agg[name]
-            print(f"   {name:24s} simple={a['simple_regret_mean']:.4f}±{a['simple_regret_std']:.4f}"
-                  f"  cumreg={a['final_cum_regret_mean']:.1f}")
+            print(
+                f"   {name:24s} simple={a['simple_regret_mean']:.4f}±{a['simple_regret_std']:.4f}"
+                f"  cumreg={a['final_cum_regret_mean']:.1f}"
+            )
 
-    meta = {"dim": dim, "n_iter": n_iter, "n_runs": n_runs, "sigma": sigma,
-            "functions": functions, "algos": ALGOS, "results": results}
-    outpath = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("dttts_compare_results.json")
+    meta = {
+        "dim": dim,
+        "n_iter": n_iter,
+        "n_runs": n_runs,
+        "sigma": sigma,
+        "functions": functions,
+        "algos": ALGOS,
+        "results": results,
+    }
+    outpath = Path(sys.argv[3]) if len(sys.argv) > 3 else RESULTS_FILE
     outpath.write_text(json.dumps(meta))
     print("WROTE", outpath)
 

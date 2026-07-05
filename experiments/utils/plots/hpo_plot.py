@@ -320,7 +320,9 @@ def plot_cumulative_regret_over_iterations(
         std_regrets = algo_data["regret_std"].values
 
         # Calculate cumulative mean regret
-        cumulative_mean = np.cumsum(mean_regrets) / np.arange(1, len(mean_regrets) + 1)
+        cumulative_mean = np.cumsum(
+            mean_regrets
+        )  # / np.arange(1, len(mean_regrets) + 1)
 
         color = get_algorithm_color(i)
         marker = base_markers[i % len(base_markers)]
@@ -510,7 +512,9 @@ def plot_combined_regrets(
         mean_regrets = algo_data["regret_mean"].values
 
         # Calculate cumulative mean regret
-        cumulative_mean = np.cumsum(mean_regrets) / np.arange(1, len(mean_regrets) + 1)
+        cumulative_mean = np.cumsum(
+            mean_regrets
+        )  # / np.arange(1, len(mean_regrets) + 1)
 
         color = get_algorithm_color(i)
         marker = base_markers[i % len(base_markers)]

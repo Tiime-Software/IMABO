@@ -7,21 +7,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from experiments.utils.plot_configs import (
+from experiments.utils.plots.plot_configs import (
     ALGORITHM_COLORS,
 )
 
 
-RESULTS_DIR = Path(__file__).parents[2] / "results"
+RESULTS_DIR = Path(__file__).parents[3] / "results"
 
 
 def _format_k_ablation_label(algo, k=None):
     if str(algo).upper() == "IMABO" or (k is not None and pd.isna(k)):
         return "IMABO"
     if k is not None and not pd.isna(k):
-        return f"Optuna {int(k)}"
+        return f"TPE-{int(k)}"
     if "k=" in str(algo):
-        return f"Optuna {int(str(algo).split('k=')[1])}"
+        return f"TPE-{int(str(algo).split('k=')[1])}"
     return str(algo)
 
 
@@ -60,9 +60,10 @@ def plot_cumulative_regrets_k_experiment(save_fig=False):
             mean_regrets = algo_data["regret_mean"].values
             std_regrets = algo_data["regret_std"].values
 
-            cumulative_mean = np.cumsum(mean_regrets) / np.arange(
-                1, len(mean_regrets) + 1
-            )
+            # cumulative_mean = np.cumsum(mean_regrets) / np.arange(
+            #     1, len(mean_regrets) + 1
+            # )
+            cumulative_mean = np.cumsum(mean_regrets)
 
             color = ALGORITHM_COLORS[algo_idx % len(ALGORITHM_COLORS)]
             label = _format_k_ablation_label(algo)
@@ -180,10 +181,11 @@ def plot_simple_regret_k_experiment(save_fig=False):
 
 if __name__ == "__main__":
     # Generate both plots
+    save_fig = True
     print("Generating cumulative regrets plot...")
-    plot_cumulative_regrets_k_experiment(save_fig=True)
+    plot_cumulative_regrets_k_experiment(save_fig=save_fig)
 
     print("Generating simple regret plot...")
-    plot_simple_regret_k_experiment(save_fig=True)
+    plot_simple_regret_k_experiment(save_fig=save_fig)
 
     print("All plots generated successfully!")

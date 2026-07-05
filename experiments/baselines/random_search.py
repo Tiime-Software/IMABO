@@ -1,73 +1,74 @@
-"""Random search baseline with the suggest()/observe()/best_config interface.
+"""
+RandomSearch: a true uniform-random-search baseline.
 
-Fully any-space: draws each configuration independently and uniformly from the
-box (log-uniform for log axes, uniform integer, uniform categorical), exactly
-like D-TTTS's reservoir but with no bandit/posterior layer on top.  This is the
-honest floor -- it isolates what the bandit (MOSS) and oracle (TPE) layers of
-IMABO, and the posterior machinery of D-TTTS, actually buy over blind sampling.
-
-Recommendation: the configuration with the highest single observed (noisy)
-reward seen so far -- the standard recommendation for random search, which never
-re-evaluates a configuration.
+Every ``suggest()`` samples a fresh configuration uniformly from the search
+space; it never re-pulls a config and keeps no bandit state. ``best_config``
+returns the configuration with the highest *mean* observed reward.
 """
 
-from __future__ import annotations
-
 import math
-from typing import Any
+import random
+from collections import defaultdict
+from typing import Any, Optional
 
-import numpy as np
 from optuna.distributions import (
     CategoricalDistribution,
     FloatDistribution,
     IntDistribution,
 )
 
+from imabo.memory import config_to_key, key_to_config
 from imabo.tpe import create_search_space
 
 
 class RandomSearch:
-    def __init__(self, search_space: dict[str, Any], seed: int | None = 42):
-        self.param_names = sorted(search_space.keys())
-        self.distributions, _ = create_search_space(search_space)
-        self.rng = np.random.default_rng(seed)
-        self._pending: dict | None = None
-        self._best_cfg: dict | None = None
-        self._best_reward = -np.inf
+    """Uniform random search over an IMABO-style search space."""
 
-    def _random_config(self) -> dict[str, Any]:
-        cfg: dict[str, Any] = {}
+    def __init__(self, search_space: dict[str, Any], seed: int | None = 42, **kwargs):
+        self.param_names = list(sorted(search_space.keys()))
+        self.distributions, _ = create_search_space(search_space)
+        self.rng = random.Random(seed)
+        # config-key -> list of observed rewards
+        self._rewards: dict = defaultdict(list)
+        self._last: Optional[dict[str, Any]] = None
+
+    def _sample(self) -> dict[str, Any]:
+        config: dict[str, Any] = {}
         for name in self.param_names:
             dist = self.distributions[name]
             if isinstance(dist, FloatDistribution):
                 if dist.log:
-                    cfg[name] = math.exp(
+                    config[name] = math.exp(
                         self.rng.uniform(math.log(dist.low), math.log(dist.high))
                     )
                 else:
-                    cfg[name] = self.rng.uniform(dist.low, dist.high)
+                    config[name] = self.rng.uniform(dist.low, dist.high)
             elif isinstance(dist, IntDistribution):
-                cfg[name] = int(self.rng.integers(dist.low, dist.high + 1))
+                config[name] = self.rng.randint(dist.low, dist.high)
             elif isinstance(dist, CategoricalDistribution):
-                cfg[name] = dist.choices[int(self.rng.integers(len(dist.choices)))]
-        return cfg
+                config[name] = self.rng.choice(dist.choices)
+        return config
 
     def suggest(self) -> dict[str, Any]:
-        self._pending = self._random_config()
-        return self._pending
+        self._last = self._sample()
+        return self._last
 
     def observe(self, reward: float) -> None:
-        if self._pending is None:
+        if self._last is None:
             raise RuntimeError("observe() called before suggest()")
-        if reward > self._best_reward:
-            self._best_reward = reward
-            self._best_cfg = self._pending
-        self._pending = None
+        self._rewards[config_to_key(self._last, self.param_names)].append(reward)
+        self._last = None
 
     @property
-    def best_config(self) -> dict[str, Any] | None:
-        return self._best_cfg
+    def best_config(self) -> Optional[dict[str, Any]]:
+        if not self._rewards:
+            return None
+        best_key = max(
+            self._rewards,
+            key=lambda k: sum(self._rewards[k]) / len(self._rewards[k]),
+        )
+        return key_to_config(best_key, self.param_names)
 
     @property
-    def best_x(self) -> dict[str, Any] | None:
-        return self._best_cfg
+    def best_x(self) -> Optional[dict[str, Any]]:
+        return self.best_config

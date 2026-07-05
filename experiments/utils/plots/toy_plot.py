@@ -9,7 +9,7 @@ from pathlib import Path
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 
-from experiments.utils.plot_configs import (
+from experiments.utils.plots.plot_configs import (
     set_research_style,
     get_algorithm_color,
     RESEARCH_COLORS,

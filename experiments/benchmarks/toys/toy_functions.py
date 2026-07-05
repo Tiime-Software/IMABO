@@ -3,7 +3,7 @@ from functools import partial
 
 
 class ObjectiveFunctions:
-    def __init__(self, dim: int = 1, noise_std: float = 0.01, noise_seed: int = 42):
+    def __init__(self, dim: int = 1, noise_std: float = 0.1, noise_seed: int = 42):
         """
         Utility class for objective functions with multidimensional support.
 
@@ -28,8 +28,8 @@ class ObjectiveFunctions:
             # Single scalar value
             return [x]
 
-    def _add_noise(self, value):
-        """Add Gaussian noise to function value."""
+    def _add_noise(self, value, fn_name: str):
+        """Add Gaussian noise: value + N(0, noise_std)."""
         if self.noise_std > 0:
             return value + self.noise_rng.normal(0, self.noise_std)
         return value
@@ -65,39 +65,40 @@ class ObjectiveFunctions:
         """Sum of sin1_1d over all dimensions."""
         coords = self._parse_input(x)[: self.dim]
         result = sum(self.sin1_1d(xi) for xi in coords)
-        return self._add_noise(result) if noise else result
+        return self._add_noise(result, "sin1") if noise else result
 
     def garland(self, x, noise=True):
         """Sum of garland_1d over all dimensions."""
         coords = self._parse_input(x)[: self.dim]
         result = sum(self.garland_1d(xi) for xi in coords)
-        return self._add_noise(result) if noise else result
+        return self._add_noise(result, "garland") if noise else result
 
     def quadratic(self, x, noise=True):
         """Sum of squared deviations from center (0.5)."""
         coords = self._parse_input(x)[: self.dim]
         result = -sum((xi - 0.5) ** 2 for xi in coords)
-        return self._add_noise(result) if noise else result
+        return self._add_noise(result, "quadratic") if noise else result
 
     def rosenbrock(self, x, noise=True):
         """Classic Rosenbrock function (modified for maximization)."""
         coords = self._parse_input(x)[: self.dim]
         if len(coords) < 2:
             result = self.rosenbrock_1d(coords[0])
-            return self._add_noise(result) if noise else result
+            return self._add_noise(result, "rosenbrock") if noise else result
 
         result = 0
         for i in range(len(coords) - 1):
             result -= 100 * (coords[i + 1] - coords[i] ** 2) ** 2 + (1 - coords[i]) ** 2
-        return self._add_noise(result) if noise else result
+        return self._add_noise(result, "rosenbrock") if noise else result
 
     def rastrigin(self, x, noise=True):
-        """N-dimensional Rastrigin function (modified for maximization)."""
+        """N-dimensional Rastrigin function (modified for maximization, scaled to [0,1] per dim)."""
         coords = self._parse_input(x)[: self.dim]
         A = 10
-        n = len(coords)
-        result = -(A * n + sum(xi**2 - A * np.cos(2 * np.pi * xi) for xi in coords))
-        return self._add_noise(result) if noise else result
+        # Returns sum-scaled reward; divide by dim afterward to get roughly [0, 1]
+        result = sum(A * (np.cos(2 * np.pi * xi) - 1) - xi**2 for xi in coords)
+        scaled = result / 40 + len(coords)
+        return self._add_noise(scaled, "rastrigin") if noise else scaled
 
     # Function properties
     def get_theoretical_max(self, function_name):
@@ -107,7 +108,7 @@ class ObjectiveFunctions:
             "quadratic": 0.0,
             "rosenbrock": 0.0,
             "garland": 0.997772313413222,
-            "rastrigin": 0.0,
+            "rastrigin": 1.0,
         }
         return max_values.get(function_name, None)
 
