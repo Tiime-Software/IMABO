@@ -76,16 +76,26 @@ class InMemoryStorage(Memory):
         self.memory: dict[ArmKey, ArmStats] = {}
         self.step_counter: int = 0
         self.param_names: list[str] = param_names
+        # Running totals kept in sync by set/pull_arm/observe so that
+        # get_reward_frequency() is O(1) instead of O(K).  Scoring MOSS for
+        # every arm on every step previously made this O(K^2) per step.
+        self._total_rewarded: int = 0
+        self._total_pending: int = 0
 
     def set(self, key: ArmKey, stats: ArmStats) -> None:
+        if key in self.memory:
+            old = self.memory[key]
+            self._total_rewarded -= old.nb_rewarded
+            self._total_pending -= old.nb_pending
         self.memory[key] = stats
+        self._total_rewarded += stats.nb_rewarded
+        self._total_pending += stats.nb_pending
 
     def get_reward_frequency(self) -> float:
-        total = sum(s.nb_rewarded + s.nb_pending for s in self.memory.values())
-        rewarded = sum(s.nb_rewarded for s in self.memory.values())
+        total = self._total_rewarded + self._total_pending
         if total < 100:
             return 1.0
-        return rewarded / total
+        return self._total_rewarded / total
 
     def increment_step_counter(self) -> None:
         self.step_counter += 1
@@ -100,6 +110,7 @@ class InMemoryStorage(Memory):
         if key not in self.memory:
             self.memory[key] = ArmStats()
         self.memory[key].nb_pending += 1
+        self._total_pending += 1
         self.increment_step_counter()
 
     def observe(self, config: ArmConfig, reward: float) -> None:
@@ -108,8 +119,11 @@ class InMemoryStorage(Memory):
             self.memory[key] = ArmStats()
         stats = self.memory[key]
         stats.nb_rewarded += 1
+        self._total_rewarded += 1
         stats.mean_reward = (
             (1 - 1 / stats.nb_rewarded) * stats.mean_reward
             + reward / stats.nb_rewarded
         )
-        stats.nb_pending = max(0, stats.nb_pending - 1)
+        if stats.nb_pending > 0:
+            stats.nb_pending -= 1
+            self._total_pending -= 1

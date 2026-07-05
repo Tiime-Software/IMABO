@@ -64,6 +64,7 @@ class IMABO:
         multivariate: bool = True,
         use_tpe: bool = True,
         memory: Memory | None = None,
+        check_reward_range: bool = True,
     ):
         """Initialize the IMABO optimizer.
 
@@ -84,6 +85,12 @@ class IMABO:
             multivariate: Whether to use multivariate Parzen estimation.
             use_tpe: Whether to use TPE for exploration.
             memory: Custom memory backend (defaults to InMemoryStorage).
+            check_reward_range: If True (default), observed rewards are validated
+                to lie in [0,1] and a ValueError is raised otherwise.  IMABO's
+                MOSS confidence bonus is an O(1) radius calibrated for a unit
+                reward range, so rewards outside [0,1] silently mis-calibrate
+                exploration; the caller must normalise before calling observe().
+                Set False only if you have a deliberate reason to bypass the check.
         """
         self.search_space_specs = search_space
         self.param_names = list(sorted(search_space.keys()))
@@ -109,6 +116,8 @@ class IMABO:
         self.weights_func = weights_func or default_weights
         self.multivariate = multivariate
         self.use_tpe = use_tpe
+
+        self.check_reward_range = check_reward_range
 
         self.last_suggested: ArmConfig | None = None
 
@@ -165,6 +174,12 @@ class IMABO:
         """
         if self.last_suggested is None:
             raise RuntimeError("observe() called before suggest()")
+        if self.check_reward_range and not (0.0 <= reward <= 1.0):
+            raise ValueError(
+                f"IMABO expects rewards in [0,1] (the MOSS confidence bonus is "
+                f"calibrated for a unit range), got {reward!r}. Normalise the "
+                f"reward before calling observe(), or pass check_reward_range=False."
+            )
         self.memory.observe(self.last_suggested, reward)
         self.last_suggested = None
 
