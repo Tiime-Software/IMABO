@@ -14,7 +14,6 @@ from tqdm import tqdm
 
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
-from experiments.utils.normalized import norm, reward_bounds
 from experiments.utils.stats import (
     calculate_statistics,
     save_iterations_to_csv,
@@ -24,7 +23,6 @@ from imabo import IMABO
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
-SIGMA = 0.1
 
 
 class Algorithm(Enum):
@@ -53,11 +51,6 @@ def run_optimization(
     fmax = obj_func.get_theoretical_max(function_name)
     search_space = obj_func.get_search_space(function_name)
 
-    lo, hi = bounds or reward_bounds(function_name, dim)
-    span = hi - lo
-    fmax_norm = norm(fmax * dim, lo, span)
-    noise_rng = np.random.default_rng(10_000 + seed)
-
     if func is None:
         raise ValueError(f"Unknown function: {function_name}")
 
@@ -65,7 +58,6 @@ def run_optimization(
         search_space=search_space,
         seed=seed,
         multivariate=True,
-        check_reward_range=(sigma is None),
     )
     stosoo_opt = TimedOptimizer(stosoo, n_iterations, dim)
     hoo_t_opt = TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0)
@@ -90,12 +82,8 @@ def run_optimization(
             if is_xarm and opt.done:
                 continue
             x = opt.suggest()
-            x_norm = norm(func_noiseless(x), lo, span)
-            if sigma is None:
-                y = norm(func(x), lo, span)  # toy's built-in noise, normalised
-            else:
-                y = x_norm + noise_rng.normal(0.0, sigma)  # dim-invariant noise
-            regret = fmax_norm - x_norm
+            y = func(x)
+            regret = fmax - func_noiseless(x) / dim
             if is_xarm:
                 opt.observe(x, y)
             else:
@@ -103,9 +91,7 @@ def run_optimization(
             regrets[opt_name]["regrets"].append(regret)
 
         best_x = opt.suggest_best() if is_xarm else opt.best_x
-        regrets[opt_name]["simple_regrets"] = fmax_norm - norm(
-            func_noiseless(best_x), lo, span
-        )
+        regrets[opt_name]["simple_regrets"] = fmax - func_noiseless(best_x) / dim
 
     return regrets
 
@@ -116,17 +102,13 @@ def run_multiple_experiments(
     n_iterations: int = 1000,
     n_runs: int = 10,
     base_seed: int = 42,
-    sigma: float | None = SIGMA,
 ) -> list[dict[str, RegretData]]:
-    bounds = reward_bounds(function_name, dim)
     return [
         run_optimization(
             function_name,
             dim,
             n_iterations,
             base_seed + i * 1000,
-            bounds=bounds,
-            sigma=sigma,
         )
         for i in range(n_runs)
     ]

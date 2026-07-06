@@ -32,7 +32,6 @@ TPE_DIMS = [1, 3, 5, 7, 10]
 TPE_FUNCTIONS = ["sin1", "garland", "rastrigin"]
 TPE_N_ITER = 3000
 TPE_N_RUNS = 10
-SIGMA = 0.5
 
 # ── Sub-experiment 2: MOSS / k impact ─────────────────────────────────────────
 K_VALUES = [1, 10, 50, 100, 200]
@@ -51,9 +50,7 @@ def run_single(
     n_iterations: int,
     seed: int,
     optimizer_type: Literal["random_suggest", "imabo", "tpe"],
-    bounds: tuple[float, float],
     k: int = 1,
-    sigma: float | None = None,
 ) -> dict:
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj.get_function_by_name(function_name)  # built-in noise
@@ -61,22 +58,12 @@ def run_single(
     fmax = obj.get_theoretical_max(function_name)
     search_space = obj.get_search_space(function_name)
 
-    def norm(v):
-        return min(1.0, max(0.0, (v - lo) / span))
-
-    lo, hi = bounds
-    span = hi - lo
-    fmax_norm = norm(fmax * dim)
-    noise_rng = np.random.default_rng(10_000 + seed)
-    check_range = sigma is None
-
     if optimizer_type == "random_suggest":
         opt = IMABO(
             search_space=search_space,
             seed=seed,
             multivariate=False,
             use_tpe=False,
-            check_reward_range=check_range,
         )
         suggest_fn = opt.suggest
         observe_fn = opt.observe
@@ -86,7 +73,6 @@ def run_single(
             search_space=search_space,
             seed=seed,
             multivariate=False,
-            check_reward_range=check_range,
         )
         suggest_fn = opt.suggest
         observe_fn = opt.observe
@@ -102,17 +88,13 @@ def run_single(
         range(n_iterations), desc=f"  {function_name} {dim}D runs", leave=False
     ):
         x = suggest_fn()
-        x_norm = norm(func_noiseless(x))
-        if sigma is None:
-            y = norm(func(x))  # toy's built-in noise, normalised
-        else:
-            y = x_norm + noise_rng.normal(0.0, sigma)  # explicit, dim-invariant noise
-        regrets.append(fmax_norm - x_norm)
+        y = func(x)
+        regrets.append(fmax - func_noiseless(x) / dim)
         observe_fn(y)
 
     best_x = best_x_fn()
     simple_regret = (
-        fmax_norm - norm(func_noiseless(best_x)) if best_x is not None else float("inf")
+        fmax - func_noiseless(best_x) / dim if best_x is not None else float("inf")
     )
     return {"regrets": regrets, "simple_regrets": simple_regret}
 
@@ -125,10 +107,7 @@ def run_experiment(
     n_runs: int,
     base_seed: int = 42,
     k: int = 1,
-    bounds: tuple[float, float] | None = None,
-    sigma: float | None = None,
 ) -> list[dict]:
-    bounds = bounds or reward_bounds(function_name, dim)
     all_results = []
     for i in tqdm(range(n_runs), desc=f"  {function_name} {dim}D runs", leave=False):
         seed = base_seed + i * 1000
@@ -140,9 +119,7 @@ def run_experiment(
                     n_iterations,
                     seed,
                     opt_name,
-                    bounds,
                     k,
-                    sigma,
                 )
                 for opt_name in optimizers
             }
@@ -167,9 +144,7 @@ def run_tpe_ablation(
 
         for dim in TPE_DIMS:
             key = f"{fn}_{dim}D_{TPE_N_ITER}"
-            raw = run_experiment(
-                fn, dim, opt_types, TPE_N_ITER, n_runs, base_seed, sigma=SIGMA
-            )
+            raw = run_experiment(fn, dim, opt_types, TPE_N_ITER, n_runs, base_seed)
             # rename keys to display names
             renamed = [{algorithms[j]: r[opt_types[j]] for j in range(2)} for r in raw]
             results_dict[key] = calculate_statistics(renamed)
@@ -190,7 +165,6 @@ def run_k_ablation(
     for fn in K_FUNCTIONS:
         print(f"\n[k ablation] {fn}")
         results: dict = {}
-        bounds = reward_bounds(fn, K_DIM)
 
         # IMABO (run once, shared across k comparisons)
         raw_imabo = run_experiment(
@@ -200,8 +174,6 @@ def run_k_ablation(
             K_N_ITER,
             n_runs,
             base_seed,
-            bounds=bounds,
-            sigma=SIGMA,
         )
         imabo_stats = calculate_statistics([{"IMABO": r["imabo"]} for r in raw_imabo])
         results["IMABO"] = imabo_stats["IMABO"]
@@ -215,8 +187,6 @@ def run_k_ablation(
                 n_runs,
                 base_seed + k,
                 k=k,
-                bounds=bounds,
-                sigma=SIGMA,
             )
             k_stats = calculate_statistics([{"tpe": r["tpe"]} for r in raw_k])
             results[f"TPE k={k}"] = k_stats["tpe"]

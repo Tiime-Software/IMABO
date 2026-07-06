@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from pathlib import Path
 
-from experiments.utils.plot_configs import set_research_style, get_algorithm_color
+from experiments.utils.plots.plot_configs import set_research_style, get_algorithm_color
 
-RESULTS_DIR = Path(__file__).parents[2] / "results" / "hotpotqa"
+RESULTS_DIR = Path(__file__).parents[3] / "results" / "hotpotqa"
 
 set_research_style()
 
@@ -49,9 +49,9 @@ def plot_hotpotqa_results(
         mean_regrets = df_iter["regret_mean"].values
         std_regrets = df_iter["regret_std"].values
 
-        # cumulative_mean = np.cumsum(mean_regrets) / np.arange(1, len(mean_regrets) + 1)
-        cumulative_mean = np.cumsum(mean_regrets)
-        cumulative_std = np.sqrt(np.cumsum(std_regrets**2))  # / iterations
+        cumulative_mean = np.cumsum(mean_regrets) / np.arange(1, len(mean_regrets) + 1)
+        # cumulative_mean = np.cumsum(mean_regrets)
+        cumulative_std = np.sqrt(np.cumsum(std_regrets**2)) / iterations
 
         color = get_algorithm_color(i)
         ax1.plot(
@@ -299,7 +299,7 @@ def plot_config_analysis(
 if __name__ == "__main__":
     # Labels must match algo_label() in hotpotqa_experiment.py (file stems).
     algorithms = ["IMABO", "Random"]  # , "IMABO-noTPE", "Optuna", "Optuna-k5"]
-    n_samples = 1000
+    n_samples = 2000
     n_runs = 5
     plot_hotpotqa_results(
         algorithms=algorithms,

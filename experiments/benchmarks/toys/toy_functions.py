@@ -29,9 +29,17 @@ class ObjectiveFunctions:
             return [x]
 
     def _add_noise(self, value, fn_name: str):
-        """Add Gaussian noise: value + N(0, noise_std)."""
+        """Add Gaussian noise on the summed-reward scale.
+
+        ``noise_std`` (sigma) is expressed on the *per-dimension* scale used by
+        the regret (``value / dim``). The objective returns a sum over ``dim``
+        dimensions, so a per-dim std of sigma corresponds to a std of
+        ``sigma * dim`` on the sum; after the regret's ``/dim`` normalization the
+        effective noise is exactly ``N(0, sigma)`` — dim-invariant and matching
+        the regret scale.
+        """
         if self.noise_std > 0:
-            return value + self.noise_rng.normal(0, self.noise_std)
+            return value + self.noise_rng.normal(0, self.noise_std * self.dim)
         return value
 
     # Base functions (1D)
