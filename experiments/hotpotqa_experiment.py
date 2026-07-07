@@ -21,7 +21,7 @@ from openrouter.errors import (
 from joblib.memory import Memory
 from tenacity import (
     retry,
-    wait_exponential,
+    wait_random_exponential,
     stop_after_attempt,
     retry_if_exception_type,
 )
@@ -150,8 +150,8 @@ Answer the question using the provided context.
             ServiceUnavailableResponseError,
         )
     ),
-    wait=wait_exponential(multiplier=2, min=10, max=120),
-    stop=stop_after_attempt(10),
+    wait=wait_random_exponential(multiplier=2, max=300),
+    stop=stop_after_attempt(20),
     reraise=True,
 )
 @memory.cache(ignore=["passages"])
@@ -257,7 +257,7 @@ def _run_algorithm(
     seed: int,
     checkpoint_path: Path,
     batch_size: int = 1,
-    max_workers: int = 10,
+    max_workers: int = 4,
     optuna_k: int = 1,
 ) -> dict:
     optimizer = build_optimizer(algorithm, seed, optuna_k=optuna_k)
@@ -496,7 +496,7 @@ if __name__ == "__main__":
     n_samples = 2000
     n_runs = 5
     n_holdout = 200
-    algorithm = Algorithm.RANDOM
+    algorithm = Algorithm.NO_TPE
 
     run_multiple_experiments(
         n_samples=n_samples,

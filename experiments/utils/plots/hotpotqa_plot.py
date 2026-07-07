@@ -301,15 +301,16 @@ if __name__ == "__main__":
     algorithms = ["IMABO", "Random"]  # , "IMABO-noTPE", "Optuna", "Optuna-k5"]
     n_samples = 2000
     n_runs = 5
+    save_fig = True
     plot_hotpotqa_results(
         algorithms=algorithms,
         n_samples=n_samples,
         n_runs=n_runs,
-        save_fig=False,
+        save_fig=save_fig,
     )
     plot_config_analysis(
         algorithms=algorithms,
         n_samples=n_samples,
         n_runs=n_runs,
-        save_fig=False,
+        save_fig=save_fig,
     )

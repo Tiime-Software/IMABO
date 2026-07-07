@@ -15,7 +15,7 @@ from experiments.utils.plots.plot_configs import (
     RESEARCH_COLORS,
 )
 
-RESULTS_DIR = Path(__file__).parents[2] / "results"
+RESULTS_DIR = Path(__file__).parents[3] / "results"
 
 set_research_style()
 
