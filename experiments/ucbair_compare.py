@@ -20,10 +20,11 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from experiments.baselines.ucb_air import UCBAIR, MOSSAIR
+from experiments.baselines.qrm2 import QRM2
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from imabo import IMABO
 
-ALGOS = ["UCB-AIR", "MOSS-AIR", "IMABO (no oracle)", "IMABO (matched, b=0.5)"]
+ALGOS = ["UCB-AIR", "MOSS-AIR", "QRM2", "IMABO (no oracle)", "IMABO (matched, b=0.5)"]
 
 
 def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
@@ -48,6 +49,8 @@ def make_optimizer(name, ss, seed):
         return UCBAIR(search_space=ss, beta=1.0, seed=seed)
     if name == "MOSS-AIR":
         return MOSSAIR(search_space=ss, beta=1.0, seed=seed)
+    if name == "QRM2":
+        return QRM2(search_space=ss, seed=seed)
     if name == "IMABO (no oracle)":
         return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False)
     if name == "IMABO (matched, b=0.5)":

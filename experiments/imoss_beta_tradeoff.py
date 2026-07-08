@@ -20,12 +20,13 @@ from joblib import Parallel, delayed
 
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.ucb_air import UCBAIR, MOSSAIR
+from experiments.baselines.qrm2 import QRM2
 from imabo import IMABO
 from experiments.ucbair_compare import reward_bounds
 
 BETAS = [0.4, 0.5, 0.6, 0.7, 0.8]      # "not too many"
 # trajectories to record: the I-MOSS beta family + the two fixed-schedule AIR baselines
-ALGOS = [f"IMOSS b={b}" for b in BETAS] + ["UCB-AIR", "MOSS-AIR"]
+ALGOS = [f"IMOSS b={b}" for b in BETAS] + ["UCB-AIR", "MOSS-AIR", "QRM2"]
 FUNCS = ["sin1", "garland", "rastrigin"]
 N_GRID = 60                             # time points at which to record simple regret
 
@@ -47,6 +48,8 @@ def one_run(function_name, dim, n_iter, seed, bounds, grid):
             return UCBAIR(search_space=ss, beta=1.0, seed=seed)
         if name == "MOSS-AIR":
             return MOSSAIR(search_space=ss, beta=1.0, seed=seed)
+        if name == "QRM2":
+            return QRM2(search_space=ss, seed=seed)
         # otherwise an I-MOSS beta label like "IMOSS b=0.5"
         b = float(name.split("=")[1])
         return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False, beta=b)
@@ -122,7 +125,8 @@ def plot(meta, pngpath):
                                   label=f"I-MOSS \u03b2={b}")
              for i, b in enumerate(betas)}
     style["UCB-AIR"] = dict(color="#c0392b", ls=(0, (4, 2)), lw=1.9, label="UCB-AIR")
-    style["MOSS-AIR"] = dict(color="#7b2cbf", ls=(0, (1, 1)), lw=1.9, label="MOSS-AIR")
+    style["MOSS-AIR"] = dict(color="#111111", ls=(0, (1, 1)), lw=1.9, label="MOSS-AIR")
+    style["QRM2"] = dict(color="#e8992a", ls=(0, (5, 1, 1, 1)), lw=1.9, label="QRM2")
     algos = meta.get("algos", list(style))
 
     fig, axes = plt.subplots(1, len(funcs), figsize=(4.5 * len(funcs), 4.9))
