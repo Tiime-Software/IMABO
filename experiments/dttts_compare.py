@@ -3,28 +3,25 @@
 Both D-TTTS (Beta/Bernoulli) *and* IMABO's MOSS index assume rewards in [0,1]:
 D-TTTS binarizes, and the MOSS confidence bonus ``sqrt(.../n_x)`` is an O(1)
 radius calibrated for a unit reward range (the paper's Theorem 1 proof uses
-"per-round regret is at most 1" and the minimax bound ``cM*sqrt(NK)``).  The toy
-objectives do NOT satisfy this -- they are sums over ``dim`` coordinates
-(sin1/garland in ~[0,4], rastrigin in ~[-185,0]) -- so feeding raw rewards
-mis-calibrates MOSS (negligible bonus on rastrigin => near-greedy).
+"per-round regret is at most 1" and the minimax bound ``cM*sqrt(NK)``).
 
-We therefore normalise rewards to [0,1] with offline min-max bounds BEFORE
-calling observe(), and feed the SAME normalised reward to *every* algorithm.
-IMABO validates that its rewards lie in [0,1] (raising otherwise); D-TTTS
-receives them already in [0,1] for its Bernoulli binarization.  Regret is
-reported in that same normalised [0,1] space (per-round regret in [0,1]),
-matching the paper's "normalized cumulative/simple regret".
+``ObjectiveFunctions`` keeps every per-dimension term (``sin1_1d``,
+``garland_1d``, ``rastrigin_1d``) roughly in [0,1], so dividing the ``dim``-sum
+by ``dim`` gives a reward that is already close to [0,1] -- no offline min-max
+sampling needed.  This reward is *not* hard-clamped: additive noise (built-in
+or explicit ``sigma``) can push it slightly outside [0,1], which is fine --
+IMABO does not enforce the range, and D-TTTS clips internally for its
+Bernoulli binarization.  We feed the SAME (dim-normalised) reward to every
+algorithm, and report regret in that same space.
 
 Noise model (``--sigma``):
   * ``sigma=None`` (default): use the toy function's own built-in evaluation
-    noise (small, ~0.01 on the raw scale), normalised into [0,1].  Rewards stay
-    in [0,1] so IMABO's range check is left ON.
+    noise (small, ~0.01 per-dimension, dim-invariant after the /dim divide).
   * ``sigma=<float>``: ignore the built-in noise and instead add explicit
-    Gaussian noise ``N(0, sigma)`` on the [0,1]-rescaled reward.  Additive noise
-    can push a reward just outside [0,1], so IMABO's range check is bypassed
-    (check_reward_range=False).  Use this to study noise sensitivity (e.g. the
-    Random-vs-IMABO crossover): at the toy's tiny built-in noise pure breadth
-    (Random) is competitive; at sigma>=0.1 IMABO's re-pulling wins.
+    Gaussian noise ``N(0, sigma)`` on the dim-normalised reward.  Use this to
+    study noise sensitivity (e.g. the Random-vs-IMABO crossover): at the toy's
+    tiny built-in noise pure breadth (Random) is competitive; at sigma>=0.1
+    IMABO's re-pulling wins.
 
 Usage: python -m experiments.dttts_compare [n_iter] [n_runs] [out.json] [sigma]
 """
@@ -41,39 +38,11 @@ from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from imabo import IMABO
 
 
-def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
-    """Offline (low, high) bounds on the noiseless reward, padded outward.
-
-    Guarantees the theoretical optimum (fmax * dim) is inside [low, high] so the
-    normalised reward and regret both lie in [0,1].
-    """
-    obj = ObjectiveFunctions(dim=dim, noise_seed=0)
-    fn0 = obj.get_function_by_name(function_name, noise=False)
-    fmax = obj.get_theoretical_max(function_name)
-    ss = obj.get_search_space(function_name)
-    keys = sorted(ss)
-    los = np.array([ss[k]["lower"] for k in keys])
-    his = np.array([ss[k]["upper"] for k in keys])
-    rng = np.random.default_rng(0)
-    X = rng.uniform(los, his, size=(n_sample, len(keys)))
-    vals = np.array([fn0(dict(zip(keys, x))) for x in X])
-    lo = float(vals.min())
-    hi = max(float(vals.max()), fmax * dim)  # ensure the true optimum is included
-    span = hi - lo
-    return lo - pad * span, hi + pad * span
-
-
-def make_optimizer(name, ss, seed, check_range=True):
-    # rewards are normalised to [0,1] by one_run() before observe();
-    # IMABO validates the [0,1] range, D-TTTS binarizes it.  Random search sees
-    # the same normalised reward and needs no [0,1] assumption.  With explicit
-    # additive noise (sigma set) the range check is bypassed.
+def make_optimizer(name, ss, seed):
     if name == "IMABO (TPE oracle)":
-        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=True,
-                     check_reward_range=check_range)
+        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=True)
     if name == "IMABO (no oracle)":
-        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False,
-                     check_reward_range=check_range)
+        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False)
     if name == "D-TTTS":
         return DTTTS(search_space=ss, reward_low=0.0, reward_high=1.0, seed=seed)
     if name == "Random":
@@ -92,36 +61,29 @@ RUN_ALGOS = ALGOS = [
 ]
 
 
-def one_run(function_name, dim, n_iter, seed, bounds, sigma=None):
+def one_run(function_name, dim, n_iter, seed, sigma=None):
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj.get_function_by_name(function_name)          # built-in noise
     fn0 = obj.get_function_by_name(function_name, noise=False)
-    fmax = obj.get_theoretical_max(function_name)
+    fmax = obj.get_theoretical_max(function_name)            # per-dim max, ~[0,1]
     ss = obj.get_search_space(function_name)
-    lo, hi = bounds
-    span = hi - lo
     noise_rng = np.random.default_rng(10_000 + seed)
-
-    def norm(v):  # affine map into [0,1], clipped
-        return min(1.0, max(0.0, (v - lo) / span))
-
-    fmax_total_norm = norm(fmax * dim)  # normalised optimum (=1 after padding)
 
     out = {}
     for name in RUN_ALGOS:
-        opt = make_optimizer(name, ss, seed, check_range=(sigma is None))
+        opt = make_optimizer(name, ss, seed)
         regrets = np.empty(n_iter)
         for i in range(n_iter):
             x = opt.suggest()
             if sigma is None:
-                reward = norm(func(x))                       # toy's built-in noise, normalised
+                reward = func(x) / dim                       # toy's built-in noise
             else:
-                reward = norm(fn0(x)) + noise_rng.normal(0.0, sigma)  # explicit [0,1] noise
+                reward = fn0(x) / dim + noise_rng.normal(0.0, sigma)  # explicit noise
             opt.observe(reward)
-            # normalised per-round regret in [0,1], scored on the noiseless f
-            regrets[i] = fmax_total_norm - norm(fn0(x))
+            # per-round regret, scored on the noiseless f
+            regrets[i] = fmax - fn0(x) / dim
         bx = opt.best_config
-        sr = fmax_total_norm - norm(fn0(bx))
+        sr = fmax - fn0(bx) / dim
         out[name] = {"regrets": regrets, "simple_regret": float(sr)}
     return out
 
@@ -136,9 +98,8 @@ def main():
 
     results = {}
     for fn in functions:
-        bounds = reward_bounds(fn, dim)
         runs = Parallel(n_jobs=8, backend="threading")(
-            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000, bounds, sigma)
+            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000, sigma)
             for r in range(n_runs)
         )
         # aggregate

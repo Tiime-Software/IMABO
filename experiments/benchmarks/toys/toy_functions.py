@@ -29,9 +29,15 @@ class ObjectiveFunctions:
             return [x]
 
     def _add_noise(self, value):
-        """Add Gaussian noise to function value."""
+        """Add Gaussian noise on the summed-reward scale.
+
+        ``noise_std`` is expressed on the per-dimension scale (the scale used
+        after dividing the sum by ``dim``), so it is scaled by ``dim`` here --
+        after that later division the effective noise is ``N(0, noise_std)``,
+        independent of ``dim``.
+        """
         if self.noise_std > 0:
-            return value + self.noise_rng.normal(0, self.noise_std)
+            return value + self.noise_rng.normal(0, self.noise_std * self.dim)
         return value
 
     # Base functions (1D)
@@ -56,8 +62,9 @@ class ObjectiveFunctions:
         return value
 
     def rastrigin_1d(self, x):
-        """1D Rastrigin function"""
-        value = -(x**2 - 10 * np.cos(2 * np.pi * x)) + 10
+        """1D Rastrigin function, rescaled to roughly [0, 1] like sin1_1d/garland_1d."""
+        A = 10
+        value = (A * (np.cos(2 * np.pi * x) - 1) - x**2) / 40 + 1
         return value
 
     # Multidimensional functions
@@ -92,11 +99,9 @@ class ObjectiveFunctions:
         return self._add_noise(result) if noise else result
 
     def rastrigin(self, x, noise=True):
-        """N-dimensional Rastrigin function (modified for maximization)."""
+        """Sum of rastrigin_1d over all dimensions."""
         coords = self._parse_input(x)[: self.dim]
-        A = 10
-        n = len(coords)
-        result = -(A * n + sum(xi**2 - A * np.cos(2 * np.pi * xi) for xi in coords))
+        result = sum(self.rastrigin_1d(xi) for xi in coords)
         return self._add_noise(result) if noise else result
 
     # Function properties
@@ -107,7 +112,7 @@ class ObjectiveFunctions:
             "quadratic": 0.0,
             "rosenbrock": 0.0,
             "garland": 0.997772313413222,
-            "rastrigin": 0.0,
+            "rastrigin": 1.0,
         }
         return max_values.get(function_name, None)
 

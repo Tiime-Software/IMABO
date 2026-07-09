@@ -22,7 +22,6 @@ from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.ucb_air import UCBAIR, MOSSAIR
 from experiments.baselines.qrm2 import QRM2
 from imabo import IMABO
-from experiments.ucbair_compare import reward_bounds
 
 BETAS = [0.4, 0.5, 0.6, 0.7, 0.8]      # "not too many"
 # trajectories to record: the I-MOSS beta family + the two fixed-schedule AIR baselines
@@ -31,16 +30,12 @@ FUNCS = ["sin1", "garland", "rastrigin"]
 N_GRID = 60                             # time points at which to record simple regret
 
 
-def one_run(function_name, dim, n_iter, seed, bounds, grid):
+def one_run(function_name, dim, n_iter, seed, grid):
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj.get_function_by_name(function_name)
     fn0 = obj.get_function_by_name(function_name, noise=False)
-    fmax = obj.get_theoretical_max(function_name)
+    fmax = obj.get_theoretical_max(function_name)  # per-dim max, ~[0,1]
     ss = obj.get_search_space(function_name)
-    lo, hi = bounds
-    span = hi - lo
-    norm = lambda v: min(1.0, max(0.0, (v - lo) / span))
-    fmaxn = norm(fmax * dim)
     grid_set = set(grid)
 
     def make(name):
@@ -62,11 +57,11 @@ def one_run(function_name, dim, n_iter, seed, bounds, grid):
         sr_grid = []
         for i in range(1, n_iter + 1):
             x = opt.suggest()
-            opt.observe(norm(func(x)))
-            cum += fmaxn - norm(fn0(x))
+            opt.observe(func(x) / dim)
+            cum += fmax - fn0(x) / dim
             if i in grid_set:
                 bx = opt.best_config
-                sr = fmaxn - norm(fn0(bx)) if bx is not None else fmaxn
+                sr = fmax - fn0(bx) / dim if bx is not None else fmax
                 cum_grid.append(cum)
                 sr_grid.append(sr)
         out[name] = {"cum": cum_grid, "sr": sr_grid}
@@ -83,9 +78,8 @@ def main():
 
     results = {}
     for fn in FUNCS:
-        bounds = reward_bounds(fn, dim)
         runs = Parallel(n_jobs=8, backend="threading")(
-            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000, bounds, grid)
+            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000, grid)
             for r in range(n_runs)
         )
         agg = {}

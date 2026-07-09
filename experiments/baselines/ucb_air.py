@@ -15,13 +15,19 @@ regularity used throughout the IMAB literature).  It has two moving parts:
      step index t makes K(t) exceed the number of arms already drawn, we draw a
      fresh arm uniformly from the reservoir and add it to the active set.
 
-  2. UCB index on the active set.  Among the active arms, pull the one maximising
-     an anytime UCB1 bound
+  2. UCB-V index on the active set.  Among the active arms, pull the one
+     maximising the paper's variance-aware UCB bound (their eq. 3),
 
-         mu_hat_i + sqrt( 2 * log(t) / n_i ) .
+         B_i = mu_hat_i + sqrt( 2 * V_i * E_t / n_i ) + 3 * E_t / n_i ,
 
-     A never-pulled active arm has an infinite index, so a newly drawn arm is
-     always tried once immediately -- this is how AIR injects breadth.
+     where V_i is the empirical reward variance of arm i and E_t is an
+     exploration sequence with 2*log(10*log t) <= E_t <= log t (we use the upper
+     end, E_t = log t).  The variance term is the point of UCB-V: for a
+     near-optimal, low-variance arm it shrinks the bonus far below UCB1's
+     sqrt(2 log t / n), which is exactly the regime (mu* = 1, beta < 1) the paper
+     says the variance is "crucial" for.  A never-pulled active arm has an
+     infinite index, so a newly drawn arm is always tried once immediately --
+     this is how AIR injects breadth.
 
 Same generator-based interface as the other baselines (suggest / observe /
 best_config).  Rewards are assumed already normalised to [0, 1] by the caller
@@ -48,17 +54,26 @@ from imabo.tpe import create_search_space
 
 
 class _Arm:
-    __slots__ = ("cfg", "key", "n", "sum")
+    __slots__ = ("cfg", "key", "n", "sum", "sumsq")
 
     def __init__(self, cfg: dict[str, Any], key: tuple):
         self.cfg = cfg
         self.key = key
         self.n = 0          # number of observed rewards
         self.sum = 0.0      # sum of observed rewards
+        self.sumsq = 0.0    # sum of squared rewards (for empirical variance)
 
     @property
     def mean(self) -> float:
         return self.sum / self.n if self.n > 0 else 0.0
+
+    @property
+    def var(self) -> float:
+        """Empirical (population) variance of observed rewards, clipped >= 0."""
+        if self.n == 0:
+            return 0.0
+        m = self.sum / self.n
+        return max(0.0, self.sumsq / self.n - m * m)
 
 
 class UCBAIR:
@@ -78,7 +93,8 @@ class UCBAIR:
                 beta < 1, else ceil(sqrt(t)).  beta=1 is the neutral default
                 (uniform-ish reservoir), matching the toy setting where the
                 true tail exponent is unknown.
-            ucb_c: multiplier on the UCB bonus sqrt(2 log t / n).
+            ucb_c: multiplier on the UCB-V exploration sequence E_t (E_t = ucb_c
+                * log t).  ucb_c=1 is the paper's upper end of the allowed range.
             seed: RNG seed for drawing reservoir arms.
         """
         self.param_names = sorted(search_space.keys())
@@ -131,10 +147,14 @@ class UCBAIR:
         if unpulled:
             arm = unpulled[0]
         else:
-            log_t = math.log(max(2.0, self.t))
+            E_t = self.ucb_c * math.log(max(2.0, self.t))     # exploration sequence
             arm = max(
                 self.arms,
-                key=lambda a: a.mean + self.ucb_c * math.sqrt(2.0 * log_t / a.n),
+                key=lambda a: (
+                    a.mean
+                    + math.sqrt(2.0 * a.var * E_t / a.n)       # variance term
+                    + 3.0 * E_t / a.n                          # range/bias term
+                ),
             )
         self._pending = arm
         return arm.cfg
@@ -144,6 +164,7 @@ class UCBAIR:
             raise RuntimeError("observe() called before suggest()")
         self._pending.n += 1
         self._pending.sum += reward
+        self._pending.sumsq += reward * reward
         self._pending = None
 
     @property
@@ -159,11 +180,11 @@ class UCBAIR:
 
 
 class MOSSAIR(UCBAIR):
-    """AIR schedule (same as UCB-AIR) but with the MOSS index instead of UCB1.
+    """AIR schedule (same as UCB-AIR) but with the MOSS index instead of UCB-V.
 
     This isolates the *index* choice: MOSSAIR and UCBAIR draw arms on the
     identical arm-increasing schedule K(t), so any performance difference is
-    attributable to MOSS-anytime vs the UCB1 bonus, not to how fast the active
+    attributable to MOSS-anytime vs the UCB-V bonus, not to how fast the active
     set grows.  The MOSS bonus is an O(1) radius calibrated for rewards in
     [0, 1] (same assumption the toy harness enforces by normalising).
     """

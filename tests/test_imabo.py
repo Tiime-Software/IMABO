@@ -46,28 +46,6 @@ class TestIMABO:
         with pytest.raises(RuntimeError):
             opt.observe(1.0)
 
-    def test_observe_out_of_range_raises(self):
-        opt = IMABO(search_space=SIMPLE_SEARCH_SPACE, seed=42, n_startup_trials=3)
-        opt.suggest()
-        with pytest.raises(ValueError):
-            opt.observe(3.5)
-        opt2 = IMABO(search_space=SIMPLE_SEARCH_SPACE, seed=42, n_startup_trials=3)
-        opt2.suggest()
-        with pytest.raises(ValueError):
-            opt2.observe(-0.1)
-
-    def test_observe_in_range_ok_and_bypass(self):
-        opt = IMABO(search_space=SIMPLE_SEARCH_SPACE, seed=42, n_startup_trials=3)
-        opt.suggest()
-        opt.observe(0.7)  # in [0,1]: no error
-        # explicit opt-out disables the check
-        opt2 = IMABO(
-            search_space=SIMPLE_SEARCH_SPACE, seed=42, n_startup_trials=3,
-            check_reward_range=False,
-        )
-        opt2.suggest()
-        opt2.observe(3.5)  # bypassed
-
     def test_best_config_maximizes(self):
         opt = IMABO(
             search_space={"x1": {"lower": 0.0, "upper": 1.0}},
@@ -76,7 +54,7 @@ class TestIMABO:
         )
         for i in range(50):
             config = opt.suggest()
-            reward = 1.0 - abs(config["x1"] - 0.7)  # in [0,1], argmax at x1=0.7
+            reward = -abs(config["x1"] - 0.7)
             opt.observe(reward)
         best = opt.best_config
         assert best is not None

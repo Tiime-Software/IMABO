@@ -13,38 +13,33 @@ from joblib import Parallel, delayed
 from experiments.baselines.ucb_air import MOSSAIR
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from imabo import IMABO
-from experiments.ucbair_compare import reward_bounds
 
 BETAS = [0.5, 0.6, 0.7, 0.8]
 FUNCS = ["sin1", "garland", "rastrigin"]
 
 
-def one_run(function_name, dim, n_iter, seed, bounds):
+def one_run(function_name, dim, n_iter, seed):
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj.get_function_by_name(function_name)
     fn0 = obj.get_function_by_name(function_name, noise=False)
-    fmax = obj.get_theoretical_max(function_name)
+    fmax = obj.get_theoretical_max(function_name)  # per-dim max, ~[0,1]
     ss = obj.get_search_space(function_name)
-    lo, hi = bounds
-    span = hi - lo
-    norm = lambda v: min(1.0, max(0.0, (v - lo) / span))
-    fmaxn = norm(fmax * dim)
 
     row = {}
     # MOSS-AIR reference
     opt = MOSSAIR(search_space=ss, beta=1.0, seed=seed)
     cr = 0.0
     for _ in range(n_iter):
-        x = opt.suggest(); opt.observe(norm(func(x))); cr += fmaxn - norm(fn0(x))
-    row["MOSS-AIR"] = (len(opt.arms), fmaxn - norm(fn0(opt.best_config)), cr)
+        x = opt.suggest(); opt.observe(func(x) / dim); cr += fmax - fn0(x) / dim
+    row["MOSS-AIR"] = (len(opt.arms), fmax - fn0(opt.best_config) / dim, cr)
     # IMABO no-oracle at each beta
     for b in BETAS:
         opt = IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False, beta=b)
         cr = 0.0
         for _ in range(n_iter):
-            x = opt.suggest(); opt.observe(norm(func(x))); cr += fmaxn - norm(fn0(x))
+            x = opt.suggest(); opt.observe(func(x) / dim); cr += fmax - fn0(x) / dim
         arms = len(opt.memory.get_current_state().arms)
-        row[f"IMABO b={b}"] = (arms, fmaxn - norm(fn0(opt.best_config)), cr)
+        row[f"IMABO b={b}"] = (arms, fmax - fn0(opt.best_config) / dim, cr)
     return row
 
 
@@ -55,9 +50,8 @@ def main():
     base_seed = 42
     labels = ["MOSS-AIR"] + [f"IMABO b={b}" for b in BETAS]
     for fn in FUNCS:
-        bounds = reward_bounds(fn, dim)
         runs = Parallel(n_jobs=8, backend="threading")(
-            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000, bounds)
+            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000)
             for r in range(n_runs)
         )
         print(f"[{fn}]")

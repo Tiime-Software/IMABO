@@ -1,7 +1,9 @@
 """Compare UCB-AIR against MOSS on the toy functions.
 
-Three algorithms, all on rewards normalised to [0, 1] (min-max via offline
-bounds), regret reported in that normalised space:
+Three algorithms, all on the dim-normalised toy reward (each per-dimension
+term is already roughly in [0, 1], so dividing the ``dim``-sum by ``dim``
+gives a reward close to [0, 1] without offline min-max sampling), regret
+reported in that same space:
 
   * UCB-AIR             -- arm-increasing schedule K(t)=ceil(t^{b/(b+1)}) + UCB1
   * MOSS-AIR            -- the SAME arm-increasing schedule, MOSS index (isolates
@@ -27,23 +29,6 @@ from imabo import IMABO
 ALGOS = ["UCB-AIR", "MOSS-AIR", "QRM2", "IMABO (no oracle)", "IMABO (matched, b=0.5)"]
 
 
-def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
-    obj = ObjectiveFunctions(dim=dim, noise_seed=0)
-    fn0 = obj.get_function_by_name(function_name, noise=False)
-    fmax = obj.get_theoretical_max(function_name)
-    ss = obj.get_search_space(function_name)
-    keys = sorted(ss)
-    los = np.array([ss[k]["lower"] for k in keys])
-    his = np.array([ss[k]["upper"] for k in keys])
-    rng = np.random.default_rng(0)
-    X = rng.uniform(los, his, size=(n_sample, len(keys)))
-    vals = np.array([fn0(dict(zip(keys, x))) for x in X])
-    lo = float(vals.min())
-    hi = max(float(vals.max()), fmax * dim)
-    span = hi - lo
-    return lo - pad * span, hi + pad * span
-
-
 def make_optimizer(name, ss, seed):
     if name == "UCB-AIR":
         return UCBAIR(search_space=ss, beta=1.0, seed=seed)
@@ -59,29 +44,23 @@ def make_optimizer(name, ss, seed):
     raise ValueError(name)
 
 
-def one_run(function_name, dim, n_iter, seed, bounds):
+def one_run(function_name, dim, n_iter, seed):
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj.get_function_by_name(function_name)          # toy built-in noise
     fn0 = obj.get_function_by_name(function_name, noise=False)
-    fmax = obj.get_theoretical_max(function_name)
+    fmax = obj.get_theoretical_max(function_name)            # per-dim max, ~[0,1]
     ss = obj.get_search_space(function_name)
-    lo, hi = bounds
-    span = hi - lo
 
-    def norm(v):
-        return min(1.0, max(0.0, (v - lo) / span))
-
-    fmax_total_norm = norm(fmax * dim)
     out = {}
     for name in ALGOS:
         opt = make_optimizer(name, ss, seed)
         regrets = np.empty(n_iter)
         for i in range(n_iter):
             x = opt.suggest()
-            opt.observe(norm(func(x)))                       # normalised reward in [0,1]
-            regrets[i] = fmax_total_norm - norm(fn0(x))      # normalised per-round regret
+            opt.observe(func(x) / dim)                       # dim-normalised reward
+            regrets[i] = fmax - fn0(x) / dim                 # dim-normalised per-round regret
         bx = opt.best_config
-        sr = fmax_total_norm - norm(fn0(bx))
+        sr = fmax - fn0(bx) / dim
         out[name] = {"regrets": regrets, "simple_regret": float(sr)}
     return out
 
@@ -95,9 +74,8 @@ def main():
 
     results = {}
     for fn in functions:
-        bounds = reward_bounds(fn, dim)
         runs = Parallel(n_jobs=8, backend="threading")(
-            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000, bounds)
+            delayed(one_run)(fn, dim, n_iter, base_seed + r * 1000)
             for r in range(n_runs)
         )
         agg = {}
