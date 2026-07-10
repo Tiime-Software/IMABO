@@ -7,9 +7,22 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from pathlib import Path
 
-from experiments.utils.plots.plot_configs import set_research_style, get_algorithm_color
+from experiments.utils.plots.plot_configs import (
+    set_research_style,
+    get_algorithm_color,
+    create_figure_legend,
+)
 
 RESULTS_DIR = Path(__file__).parents[3] / "results" / "hotpotqa"
+
+ALGO_DISPLAY_NAMES = {
+    "IMABO-noTPE": "I-MOSS",
+}
+
+
+def display_label(algo: str) -> str:
+    return ALGO_DISPLAY_NAMES.get(algo, algo)
+
 
 set_research_style()
 
@@ -35,6 +48,7 @@ def plot_hotpotqa_results(
     rng = np.random.default_rng(0)
 
     x_pos = np.arange(len(algorithms))
+    simple_regret_ymax = 0.5
 
     for i, algo in enumerate(algorithms):
         stem = f"{algo}_hotpotqa_{n_samples}samples_{n_runs}runs"
@@ -58,7 +72,7 @@ def plot_hotpotqa_results(
             iterations,
             cumulative_mean,
             color=color,
-            label=algo,
+            label=display_label(algo),
             marker=base_markers[i % len(base_markers)],
             markevery=max(1, len(iterations) // 8),
             linewidth=2.0,
@@ -97,9 +111,10 @@ def plot_hotpotqa_results(
             edgecolors="white",
             linewidths=0.8,
         )
+        simple_regret_ymax = max(simple_regret_ymax, mean + std, raw.max())
 
     ax1.set_xlabel("Iteration", fontsize=14)
-    ax1.set_ylabel("Cumulative Regret", fontsize=14)
+    ax1.set_ylabel("Normalized Cumulative Regret", fontsize=14)
     ax1.tick_params(axis="both", which="major", labelsize=12)
     ax1.set_axisbelow(True)
     ax1.grid(True, alpha=0.3)
@@ -107,8 +122,9 @@ def plot_hotpotqa_results(
     ax1.spines["right"].set_visible(False)
 
     ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(algorithms, fontsize=13)
+    ax2.set_xticklabels([display_label(algo) for algo in algorithms], fontsize=13)
     ax2.set_ylabel("Simple Regret", fontsize=14)
+    ax2.set_ylim(0.5, simple_regret_ymax + 0.02)
     ax2.tick_params(axis="both", which="major", labelsize=12)
     ax2.set_axisbelow(True)
     ax2.grid(True, alpha=0.3, axis="y")
@@ -116,15 +132,7 @@ def plot_hotpotqa_results(
     ax2.spines["right"].set_visible(False)
 
     handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.05),
-        ncol=len(algorithms),
-        frameon=False,
-        fontsize=13,
-    )
+    create_figure_legend(fig, handles, labels, ncol=len(algorithms))
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
@@ -197,7 +205,9 @@ def plot_config_analysis(
             row = a * n_runs + r
             df = run_data["df_cfg"]
             rewards = run_data["rewards"]
-            run_label = f"Run {r}" if n_algo == 1 else f"{algo} · Run {r}"
+            run_label = (
+                f"Run {r}" if n_algo == 1 else f"{display_label(algo)} · Run {r}"
+            )
 
             # Col 0: reward distribution
             ax = fig.add_subplot(gs[row, 0])
@@ -280,7 +290,7 @@ def plot_config_analysis(
             else:
                 cell.set_facecolor("#f9f9f9" if trow % 2 == 0 else "white")
         ax.set_title(
-            f"{algo} — best config per run",
+            f"{display_label(algo)} — best config per run",
             fontsize=12,
             fontweight="bold",
             pad=10,
@@ -298,7 +308,7 @@ def plot_config_analysis(
 
 if __name__ == "__main__":
     # Labels must match algo_label() in hotpotqa_experiment.py (file stems).
-    algorithms = ["IMABO", "Random"]  # , "IMABO-noTPE", "Optuna", "Optuna-k5"]
+    algorithms = ["IMABO", "Random", "IMABO-noTPE"]  # , "Optuna", "Optuna-k5"]
     n_samples = 2000
     n_runs = 5
     save_fig = True

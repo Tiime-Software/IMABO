@@ -55,10 +55,7 @@ def moss_anytime(
             alpha_term
             * max(
                 0,
-                math.log(
-                    total_estimated
-                    / (total_estimated**beta * arm_estimated)
-                ),
+                math.log(total_estimated / (total_estimated**beta * arm_estimated)),
             )
             / arm_estimated
         )

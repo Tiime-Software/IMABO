@@ -48,17 +48,25 @@ from imabo.tpe import create_search_space
 
 
 class _Arm:
-    __slots__ = ("cfg", "key", "n", "sum")
+    __slots__ = ("cfg", "key", "n", "sum", "sum_sq")
 
     def __init__(self, cfg: dict[str, Any], key: tuple):
         self.cfg = cfg
         self.key = key
-        self.n = 0          # number of observed rewards
-        self.sum = 0.0      # sum of observed rewards
+        self.n = 0  # number of observed rewards
+        self.sum = 0.0  # sum of observed rewards
+        self.sum_sq = 0.0  # sum of squared observed rewards
 
     @property
     def mean(self) -> float:
         return self.sum / self.n if self.n > 0 else 0.0
+
+    @property
+    def var(self) -> float:
+        # empirical variance; 0 for n <= 1 (no dispersion observed yet)
+        if self.n == 0:
+            return 0.0
+        return max(0.0, self.sum_sq / self.n - self.mean**2)
 
 
 class UCBAIR:
@@ -69,6 +77,7 @@ class UCBAIR:
         search_space: dict[str, Any],
         beta: float = 1.0,
         ucb_c: float = 1.0,
+        mu_star_is_one: bool = True,
         seed: int | None = 42,
     ):
         """
@@ -88,8 +97,10 @@ class UCBAIR:
         self.rng = np.random.default_rng(seed)
 
         self.arms: list[_Arm] = []
-        self.t = 0                     # step counter (number of suggest() calls)
+        self.t = 0  # step counter (number of suggest() calls)
         self._pending: _Arm | None = None
+        self.mu_star_is_one = mu_star_is_one
+        self._seen_keys: set[tuple] = set()
 
     # -- reservoir ----------------------------------------------------------
     def _draw_config(self) -> dict[str, Any]:
@@ -110,8 +121,13 @@ class UCBAIR:
         return cfg
 
     def _target_num_arms(self, t: int) -> int:
-        exponent = self.beta / (self.beta + 1.0) if self.beta < 1.0 else 0.5
-        return max(1, math.ceil(t ** exponent))
+        t = max(1, t)
+
+        if self.beta < 1.0 and not self.mu_star_is_one:
+            exponent = self.beta / 2
+        else:
+            exponent = self.beta / (self.beta + 1.0)
+        return max(1, math.ceil(t**exponent))
 
     def _maybe_add_arm(self) -> None:
         """Arm-Increasing Rule: grow the active set toward K(t)."""
@@ -119,23 +135,29 @@ class UCBAIR:
         while len(self.arms) < target:
             cfg = self._draw_config()
             key = tuple((n, cfg[n]) for n in self.param_names)
+            if key in self._seen_keys:
+                continue
+            self._seen_keys.add(key)
             self.arms.append(_Arm(cfg, key))
+
+    def _exploration_sequence(self, t: int) -> float:
+        t = max(3, t)
+        return math.log(t)
 
     # -- generator interface -----------------------------------------------
     def suggest(self) -> dict[str, Any]:
         self.t += 1
         self._maybe_add_arm()
-
-        # any active arm never pulled -> index = +inf, pull it (breadth)
         unpulled = [a for a in self.arms if a.n == 0]
         if unpulled:
             arm = unpulled[0]
         else:
-            log_t = math.log(max(2.0, self.t))
-            arm = max(
-                self.arms,
-                key=lambda a: a.mean + self.ucb_c * math.sqrt(2.0 * log_t / a.n),
-            )
+            E_t = self._exploration_sequence(self.t)
+
+            def ucb_v(a: _Arm) -> float:
+                return a.mean + math.sqrt(2.0 * a.var * E_t / a.n) + 3.0 * E_t / a.n
+
+            arm = max(self.arms, key=ucb_v)
         self._pending = arm
         return arm.cfg
 
@@ -144,6 +166,7 @@ class UCBAIR:
             raise RuntimeError("observe() called before suggest()")
         self._pending.n += 1
         self._pending.sum += reward
+        self._pending.sum_sq += reward**2
         self._pending = None
 
     @property

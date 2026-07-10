@@ -19,6 +19,15 @@ from imabo.optimizer import IMABO, FiniteIMABO
 from imabo.tpe import default_gamma, default_weights, hyperopt_default_gamma
 from imabo.types import ArmConfig, ArmKey
 
+try:
+    # TabFMIMABO pulls in optional deps (tabfm, pandas, huggingface_hub,
+    # safetensors) not required by the core package; degrade gracefully.
+    from imabo.tabfm_optimizer import TabFMIMABO
+
+    _TABFM_AVAILABLE = True
+except ImportError:
+    _TABFM_AVAILABLE = False
+
 __all__ = [
     # Optimizers
     "IMABO",
@@ -44,3 +53,6 @@ __all__ = [
     "ArmKey",
     "ArmConfig",
 ]
+
+if _TABFM_AVAILABLE:
+    __all__.append("TabFMIMABO")

@@ -12,19 +12,28 @@ bounds), regret reported in that normalised space:
 
 Usage: python -m experiments.ucbair_compare [n_iter] [n_runs] [out.json]
 """
+
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 from joblib import Parallel, delayed
-
+from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR, MOSSAIR
 from experiments.baselines.qrm2 import QRM2
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from imabo import IMABO
 
-ALGOS = ["UCB-AIR", "MOSS-AIR", "QRM2", "IMABO (no oracle)", "IMABO (matched, b=0.5)"]
+ALGOS = [
+    "RandomSearch",
+    "UCB-AIR",
+    "MOSS-AIR",
+    "QRM2",
+    "IMABO (no oracle)",
+    "IMABO (matched, b=0.5)",
+]
+
+RESULT_DIR = Path(__file__).parent.parent / "results"
 
 
 def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
@@ -45,6 +54,8 @@ def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
 
 
 def make_optimizer(name, ss, seed):
+    if name == "RandomSearch":
+        return RandomSearch(search_space=ss, seed=seed)
     if name == "UCB-AIR":
         return UCBAIR(search_space=ss, beta=1.0, seed=seed)
     if name == "MOSS-AIR":
@@ -55,13 +66,15 @@ def make_optimizer(name, ss, seed):
         return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False)
     if name == "IMABO (matched, b=0.5)":
         # beta=0.5 opens ceil(t^0.5) arms == MOSS-AIR's schedule (same MOSS index)
-        return IMABO(search_space=ss, seed=seed, multivariate=True, use_tpe=False, beta=0.5)
+        return IMABO(
+            search_space=ss, seed=seed, multivariate=True, use_tpe=False, beta=0.5
+        )
     raise ValueError(name)
 
 
 def one_run(function_name, dim, n_iter, seed, bounds):
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
-    func = obj.get_function_by_name(function_name)          # toy built-in noise
+    func = obj.get_function_by_name(function_name)  # toy built-in noise
     fn0 = obj.get_function_by_name(function_name, noise=False)
     fmax = obj.get_theoretical_max(function_name)
     ss = obj.get_search_space(function_name)
@@ -72,14 +85,15 @@ def one_run(function_name, dim, n_iter, seed, bounds):
         return min(1.0, max(0.0, (v - lo) / span))
 
     fmax_total_norm = norm(fmax * dim)
+
     out = {}
     for name in ALGOS:
         opt = make_optimizer(name, ss, seed)
         regrets = np.empty(n_iter)
         for i in range(n_iter):
             x = opt.suggest()
-            opt.observe(norm(func(x)))                       # normalised reward in [0,1]
-            regrets[i] = fmax_total_norm - norm(fn0(x))      # normalised per-round regret
+            opt.observe(norm(func(x)))  # normalised reward in [0,1]
+            regrets[i] = fmax_total_norm - norm(fn0(x))  # normalised per-round regret
         bx = opt.best_config
         sr = fmax_total_norm - norm(fn0(bx))
         out[name] = {"regrets": regrets, "simple_regret": float(sr)}
@@ -88,8 +102,10 @@ def one_run(function_name, dim, n_iter, seed, bounds):
 
 def main():
     dim = 4
-    n_iter = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
-    n_runs = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+    # n_iter = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
+    # n_runs = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+    n_iter = 3000
+    n_runs = 20
     functions = ["sin1", "garland", "rastrigin"]
     base_seed = 42
 
@@ -118,12 +134,23 @@ def main():
         print(f"[{fn}] done")
         for name in ALGOS:
             a = agg[name]
-            print(f"   {name:20s} simple={a['simple_regret_mean']:.4f}±{a['simple_regret_std']:.4f}"
-                  f"  cumreg={a['final_cum_regret_mean']:.1f}")
+            print(
+                f"   {name:20s} simple={a['simple_regret_mean']:.4f}±{a['simple_regret_std']:.4f}"
+                f"  cumreg={a['final_cum_regret_mean']:.1f}"
+            )
 
-    meta = {"dim": dim, "n_iter": n_iter, "n_runs": n_runs, "functions": functions,
-            "algos": ALGOS, "results": results}
-    outpath = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("ucbair_compare_results.json")
+    meta = {
+        "dim": dim,
+        "n_iter": n_iter,
+        "n_runs": n_runs,
+        "functions": functions,
+        "algos": ALGOS,
+        "results": results,
+    }
+    # outpath = (
+    #     Path(sys.argv[3]) if len(sys.argv) > 3 else Path("ucbair_compare_results.json")
+    # )
+    outpath = RESULT_DIR / "ucbair_compare_results.json"
     outpath.write_text(json.dumps(meta))
     print("WROTE", outpath)
 

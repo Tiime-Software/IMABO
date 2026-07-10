@@ -30,6 +30,26 @@ def get_algorithm_color(index: int) -> str:
     return ALGORITHM_COLORS[index % len(ALGORITHM_COLORS)]
 
 
+def create_figure_legend(
+    fig,
+    handles,
+    labels,
+    *,
+    ncol: int,
+    bbox_y: float = 1.08,
+    fontsize: int = 22,
+) -> None:
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, bbox_y),
+        ncol=ncol,
+        frameon=False,
+        prop={"size": fontsize, "family": "serif", "weight": "bold"},
+    )
+
+
 def set_research_style():
     plt.rcParams.update(
         {

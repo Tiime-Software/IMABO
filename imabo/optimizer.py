@@ -17,7 +17,7 @@ from imabo.memory import (
     config_to_key,
     key_to_config,
 )
-from imabo.moss import kl_ucb, moss_anytime, ucb_siri
+from imabo.moss import kl_ucb, moss_anytime, ucb, ucb_siri
 from imabo.tpe import (
     create_search_space,
     default_gamma,
@@ -64,6 +64,7 @@ class IMABO:
         multivariate: bool = True,
         use_tpe: bool = True,
         memory: Memory | None = None,
+        tpe_split_bound: Literal["moss", "lcb"] = "moss",
     ):
         """Initialize the IMABO optimizer.
 
@@ -84,6 +85,9 @@ class IMABO:
             multivariate: Whether to use multivariate Parzen estimation.
             use_tpe: Whether to use TPE for exploration.
             memory: Custom memory backend (defaults to InMemoryStorage).
+            tpe_split_bound: Index used to rank arms in :meth:`tpe_split`,
+                "moss" (default, MOSS-anytime UCB) or "lcb" (classic UCB1-style
+                lower confidence bound, an alternative pessimistic ranking).
         """
         self.search_space_specs = search_space
         self.param_names = list(sorted(search_space.keys()))
@@ -109,6 +113,7 @@ class IMABO:
         self.weights_func = weights_func or default_weights
         self.multivariate = multivariate
         self.use_tpe = use_tpe
+        self.tpe_split_bound = tpe_split_bound
 
         self.last_suggested: ArmConfig | None = None
 
@@ -259,6 +264,23 @@ class IMABO:
             nb_pending_arm=stats.nb_pending,
         )
 
+    def compute_ucb_lcb_score(
+        self,
+        state: CurrentState,
+        stats: ArmStats,
+    ) -> float:
+        """Compute the classic UCB1-style lower confidence bound of an arm.
+
+        Pessimistic alternative to :meth:`compute_moss_score`, used by
+        :meth:`tpe_split` when ``tpe_split_bound == "lcb"``.
+        """
+        return ucb(
+            mean=stats.mean_reward,
+            nb_rewarded_arm=stats.nb_rewarded,
+            total_pulls=state.nb_steps,
+            bonus_type="lcb",
+        )
+
     def suggest_existing(
         self,
         state: CurrentState,
@@ -321,14 +343,20 @@ class IMABO:
         nb_pending_total: int,
         nb_rewarded_total: int,
     ) -> tuple[list[tuple[ArmKey, ArmStats]], list[tuple[ArmKey, ArmStats]]]:
-        """Split rewarded arms into 'good' and 'bad' sets using MOSS scores."""
-        sorted_arms = sorted(
-            rewarded_arms,
-            key=lambda t: self.compute_moss_score(
-                state, t[1], nb_pending_total, nb_rewarded_total
-            ),
-            reverse=True,
-        )
+        """Split rewarded arms into 'good' and 'bad' sets, ranked by score.
+
+        Ranking index is controlled by ``tpe_split_bound``: the default
+        MOSS-anytime UCB, or the classic UCB1-style LCB as an alternative.
+        """
+
+        def score(arm: tuple[ArmKey, ArmStats]) -> float:
+            if self.tpe_split_bound == "lcb":
+                return self.compute_ucb_lcb_score(state, arm[1])
+            return self.compute_moss_score(
+                state, arm[1], nb_pending_total, nb_rewarded_total
+            )
+
+        sorted_arms = sorted(rewarded_arms, key=score, reverse=True)
         n_good = self.gamma_func(len(sorted_arms))
         n_good = max(1, min(n_good, len(sorted_arms) - 1))
         return sorted_arms[:n_good], sorted_arms[n_good:]
