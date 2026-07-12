@@ -102,7 +102,7 @@ def run_single_experiment(
 ) -> dict:
     """Run one seed of the experiment with a single algorithm.
 
-    noise=True (default): Bernoulli(f(x)) reward, as originally designed.
+    noise=True (default): Bernoulli(f(x)) reward.
     noise=False: the reward IS f(x) directly (no sampling) -- an ablation to
     check how much of the run-to-run spread/outliers comes from reward noise
     rather than the search-space/optimizer mechanics themselves.

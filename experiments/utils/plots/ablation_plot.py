@@ -8,7 +8,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from experiments.utils.plots.plot_configs import (
-    ALGORITHM_COLORS,
+    create_figure_legend,
+    display_name,
+    get_algorithm_color,
+    save_figure,
 )
 
 
@@ -17,7 +20,7 @@ RESULTS_DIR = Path(__file__).parents[3] / "results"
 
 def _format_k_ablation_label(algo, k=None):
     if str(algo).upper() == "IMABO" or (k is not None and pd.isna(k)):
-        return "IMABO"
+        return display_name("IMABO")
     if k is not None and not pd.isna(k):
         return f"TPE-{int(k)}"
     if "k=" in str(algo):
@@ -65,7 +68,7 @@ def plot_cumulative_regrets_k_experiment(save_fig=False):
             # )
             cumulative_mean = np.cumsum(mean_regrets)
 
-            color = ALGORITHM_COLORS[algo_idx % len(ALGORITHM_COLORS)]
+            color = get_algorithm_color(algo_idx)
             label = _format_k_ablation_label(algo)
 
             # Plot line with markers
@@ -96,24 +99,17 @@ def plot_cumulative_regrets_k_experiment(save_fig=False):
 
     # Create common legend at top center
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.10),
-        ncol=6,
-        # fontsize=25,
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
-    )
+    create_figure_legend(fig, handles, labels, ncol=6, bbox_y=1.10)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if save_fig:
-        plt.savefig(
+        save_figure(
             RESULTS_DIR / "k_experiment_cumulative_regrets.pdf",
             dpi=300,
             bbox_inches="tight",
+            mkdir=False,
+            verbose=False,
         )
     plt.show()
 
@@ -151,7 +147,7 @@ def plot_simple_regret_k_experiment(save_fig=False):
             x_positions,
             simple_regret_mean,
             yerr=simple_regret_std,
-            color=ALGORITHM_COLORS[0],
+            color=get_algorithm_color(0),
             marker="o",
             markersize=8,
             linewidth=2,
@@ -171,10 +167,12 @@ def plot_simple_regret_k_experiment(save_fig=False):
     plt.tight_layout()
 
     if save_fig:
-        plt.savefig(
+        save_figure(
             RESULTS_DIR / "k_ablation_simple_regrets.pdf",
             dpi=300,
             bbox_inches="tight",
+            mkdir=False,
+            verbose=False,
         )
     plt.show()
 

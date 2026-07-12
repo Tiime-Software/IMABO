@@ -6,14 +6,14 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from pathlib import Path
 
-from experiments.utils.plots.plot_configs import set_research_style
+from experiments.utils.plots.plot_configs import save_figure, set_research_style
 
 set_research_style()
 
 RESULTS_FILE = Path(__file__).parents[3] / "results" / "dttts_compare_results.json"
 
 ALGO_STYLE = {
-    "IMABO (TPE oracle)": dict(color="#0072B2", ls="-", lw=2.0, label="IMABO +TPE"),
+    "IMABO (TPE oracle)": dict(color="#0072B2", ls="-", lw=2.0, label="I-MOSS-TPE"),
     "IMABO (no oracle)": dict(color="#56B4E9", ls="-", lw=2.0, label="IMABO no-oracle"),
     "D-TTTS": dict(color="#D55E00", ls="-", lw=2.0, label="D-TTTS"),
     "Random": dict(color="#333333", ls="--", lw=2.0, label="Random"),
@@ -153,8 +153,7 @@ def plot_dttts_compare(save_fig: bool = False):
 
     if save_fig:
         out = Path(__file__).parent / "dttts_compare.pdf"
-        plt.savefig(out, bbox_inches="tight")
-        print(f"Saved to {out}")
+        save_figure(out, bbox_inches="tight", mkdir=False)
 
     plt.show()
 

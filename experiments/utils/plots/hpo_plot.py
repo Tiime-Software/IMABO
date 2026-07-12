@@ -6,62 +6,21 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from matplotlib.patches import Ellipse
-import matplotlib.transforms as transforms
 
-from experiments.utils.plot_configs import (
-    set_research_style,
+from experiments.utils.plots.plot_configs import (
+    confidence_ellipse,
+    create_figure_legend,
+    display_name,
     get_algorithm_color,
+    save_figure,
+    set_research_style,
     RESEARCH_COLORS,
 )
 
-RESULTS_DIR = Path(__file__).parents[2] / "results"
+RESULTS_DIR = Path(__file__).parents[3] / "results"
 
 # Apply research style
 set_research_style()
-
-
-def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
-    """
-    Create a covariance confidence ellipse of x and y.
-
-    Args:
-        x, y: Input data arrays
-        ax: The axis object to plot the ellipse onto
-        n_std: Number of standard deviations (default: 1.0)
-        facecolor: Color to fill ellipse
-        **kwargs: Additional arguments passed to Ellipse patch
-    """
-    if x.size != y.size:
-        raise ValueError("x and y must be the same size")
-
-    cov = np.cov(x, y)
-    pearson = np.corrcoef(x, y)[0, 1]
-    ell_radius_x = np.sqrt(1 + pearson)
-    ell_radius_y = np.sqrt(1 - pearson)
-    ellipse = Ellipse(
-        (0, 0),
-        width=ell_radius_x * 2,
-        height=ell_radius_y * 2,
-        facecolor=facecolor,
-        **kwargs,
-    )
-
-    scale_x = np.sqrt(cov[0, 0]) * n_std
-    mean_x = np.mean(x)
-
-    scale_y = np.sqrt(cov[1, 1]) * n_std
-    mean_y = np.mean(y)
-
-    transf = (
-        transforms.Affine2D()
-        .rotate_deg(45)
-        .scale(scale_x, scale_y)
-        .translate(mean_x, mean_y)
-    )
-
-    ellipse.set_transform(transf + ax.transData)
-    return ax.add_patch(ellipse)
 
 
 def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"):
@@ -184,7 +143,7 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
             alpha=0.8,
             edgecolors="white",
             linewidths=2,
-            label=algorithm,
+            label=display_name(algorithm),
             zorder=5,
         )
 
@@ -240,10 +199,10 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
     ordered_labels = []
     for alg, _ in final_scores:
         for handle, label in zip(handles, labels):
-            if label == alg:
+            if label == display_name(alg):
                 ordered_handles.append(handle)
                 ordered_labels.append(
-                    f"{alg} (Rank #{final_scores.index((alg, _)) + 1})"
+                    f"{display_name(alg)} (Rank #{final_scores.index((alg, _)) + 1})"
                 )
                 break
 
@@ -268,14 +227,12 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        plt.savefig(
-            output_dir / f"{benchmark}_performance_trajectories_{exp_type}.pdf",
+        out_path = (
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{benchmark}_performance_trajectories_{exp_type}.pdf"
         )
-        print(
-            f"Saved to {output_dir / f'{benchmark}_performance_trajectories_{exp_type}.pdf'}"
-        )
+        save_figure(out_path)
 
     plt.show()
 
@@ -332,7 +289,7 @@ def plot_cumulative_regret_over_iterations(
             iterations,
             cumulative_mean,
             color=color,
-            label=algo,
+            label=display_name(algo),
             marker=marker,
             markevery=len(iterations) // 8,
             linewidth=2.5,
@@ -368,15 +325,12 @@ def plot_cumulative_regret_over_iterations(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        plt.savefig(
-            output_dir
-            / f"{benchmark}_cumulative_regret_{n_iterations}iters_{exp_type}.pdf",
+        out_path = (
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{benchmark}_cumulative_regret_{n_iterations}iters_{exp_type}.pdf"
         )
-        print(
-            f"Saved to {output_dir / f'{benchmark}_cumulative_regret_{n_iterations}iters_{exp_type}.pdf'}"
-        )
+        save_figure(out_path)
 
     plt.show()
 
@@ -420,7 +374,7 @@ def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="h
             simple_regret_mean,
             yerr=simple_regret_std,
             color=color,
-            label=algo,
+            label=display_name(algo),
             marker=marker,
             markersize=8,
             linewidth=2.5,
@@ -457,14 +411,12 @@ def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="h
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        plt.savefig(
-            output_dir / f"{benchmark}_simple_regret_vs_iterations_{exp_type}.pdf",
+        out_path = (
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{benchmark}_simple_regret_vs_iterations_{exp_type}.pdf"
         )
-        print(
-            f"Saved to {output_dir / f'{benchmark}_simple_regret_vs_iterations_{exp_type}.pdf'}"
-        )
+        save_figure(out_path)
 
     plt.show()
 
@@ -524,7 +476,7 @@ def plot_combined_regrets(
             iterations,
             cumulative_mean,
             color=color,
-            label=algo,
+            label=display_name(algo),
             marker=marker,
             markevery=len(iterations) // 8,
             linewidth=2.0,
@@ -558,7 +510,7 @@ def plot_combined_regrets(
             simple_regret_mean,
             yerr=simple_regret_std,
             color=color,
-            label=algo,
+            label=display_name(algo),
             marker=marker,
             markersize=8,
             linewidth=2.0,
@@ -577,26 +529,15 @@ def plot_combined_regrets(
 
     # Create common legend
     handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
-        ncol=len(algorithms),
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
-    )
+    create_figure_legend(fig, handles, labels, ncol=len(algorithms))
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        plt.savefig(
-            output_dir / f"{benchmark}_combined_regrets_{exp_type}.pdf",
-            bbox_inches="tight",
+        out_path = (
+            RESULTS_DIR / "paper_plots" / f"{benchmark}_combined_regrets_{exp_type}.pdf"
         )
-        print(f"Saved to {output_dir / f'{benchmark}_combined_regrets_{exp_type}.pdf'}")
+        save_figure(out_path, bbox_inches="tight")
 
     plt.show()
 

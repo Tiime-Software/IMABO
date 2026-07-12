@@ -4,12 +4,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from experiments.utils.plot_configs import set_research_style, ALGORITHM_COLORS
+from experiments.utils.plots.plot_configs import (
+    ALGORITHM_COLORS,
+    save_figure,
+    set_research_style,
+)
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 
 set_research_style()
 
-RESULTS_DIR = Path(__file__).parents[2] / "results" / "paper_plots"
+RESULTS_DIR = Path(__file__).parents[3] / "results" / "paper_plots"
 RESOLUTION = 1000
 
 FUNCTIONS = [
@@ -56,9 +60,8 @@ def plot_toy_functions_1d(save_fig=False):
     plt.tight_layout()
 
     if save_fig:
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        plt.savefig(RESULTS_DIR / "illustration_toy_functions.pdf", bbox_inches="tight")
-        print(f"Saved to {RESULTS_DIR / 'illustration_toy_functions.pdf'}")
+        out_path = RESULTS_DIR / "illustration_toy_functions.pdf"
+        save_figure(out_path, bbox_inches="tight", parents=True)
 
     plt.show()
 

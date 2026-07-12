@@ -6,50 +6,20 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from matplotlib.patches import Ellipse
-import matplotlib.transforms as transforms
 
 from experiments.utils.plots.plot_configs import (
-    set_research_style,
+    confidence_ellipse,
+    create_figure_legend,
+    display_name,
     get_algorithm_color,
+    save_figure,
+    set_research_style,
     RESEARCH_COLORS,
 )
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"
 
 set_research_style()
-
-
-def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
-    if x.size != y.size:
-        raise ValueError("x and y must be the same size")
-
-    cov = np.cov(x, y)
-    pearson = np.corrcoef(x, y)[0, 1]
-    ell_radius_x = np.sqrt(1 + pearson)
-    ell_radius_y = np.sqrt(1 - pearson)
-    ellipse = Ellipse(
-        (0, 0),
-        width=ell_radius_x * 2,
-        height=ell_radius_y * 2,
-        facecolor=facecolor,
-        **kwargs,
-    )
-
-    scale_x = np.sqrt(cov[0, 0]) * n_std
-    mean_x = np.mean(x)
-    scale_y = np.sqrt(cov[1, 1]) * n_std
-    mean_y = np.mean(y)
-
-    transf = (
-        transforms.Affine2D()
-        .rotate_deg(45)
-        .scale(scale_x, scale_y)
-        .translate(mean_x, mean_y)
-    )
-
-    ellipse.set_transform(transf + ax.transData)
-    return ax.add_patch(ellipse)
 
 
 def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
@@ -166,7 +136,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                 alpha=0.8,
                 edgecolors="white",
                 linewidths=2,
-                label=algorithm if ax_idx == 0 else "",
+                label=display_name(algorithm) if ax_idx == 0 else "",
                 zorder=5,
             )
 
@@ -180,29 +150,18 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
         ax.spines["right"].set_visible(False)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.05),
-        ncol=len(algorithms),
-        frameon=False,
-        prop={"size": 30, "family": "serif", "weight": "bold"},
-    )
+    create_figure_legend(fig, handles, labels, ncol=len(algorithms), bbox_y=1.05, fontsize=30)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         filename = "_".join(benchmarks)
-        plt.savefig(
-            output_dir / f"{filename}_trajectories_comparison_{exp_type}.pdf",
-            bbox_inches="tight",
+        out_path = (
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{filename}_trajectories_comparison_{exp_type}.pdf"
         )
-        print(
-            f"Saved to {output_dir / f'{filename}_trajectories_comparison_{exp_type}.pdf'}"
-        )
+        save_figure(out_path, bbox_inches="tight")
 
     plt.show()
 

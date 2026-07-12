@@ -6,6 +6,7 @@ Plots for the finite-armed RF tabular HPO experiment
 import json
 import re
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from experiments.utils.plots.plot_configs import set_research_style, get_algorithm_color
+from experiments.utils.plots.plot_configs import (
+    create_figure_legend,
+    get_algorithm_color,
+    save_figure,
+    set_research_style,
+)
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"
 DATA_DIR = RESULTS_DIR / "hpo_finite"
@@ -97,9 +103,8 @@ def _ordered(present) -> list[str]:
     """Algorithms present AND in _CANONICAL_ORDER, in that order.
 
     _CANONICAL_ORDER is the source of truth for which algorithms are in the
-    comparison: anything not listed there is dropped (e.g. stale on-disk result
-    files for a baseline that was removed, like MOSS-AIR), so the multi-benchmark
-    grids never silently pick an un-styled series back up.
+    comparison: anything not listed there is dropped, so the multi-benchmark
+    grids never pick up an un-styled series.
     """
     present = set(present)
     return [a for a in _CANONICAL_ORDER if a in present]
@@ -270,9 +275,8 @@ def _load_trace_field(
     """Read an arbitrary per-iteration trace `field` from every per-run JSON.
 
     Generic reader behind the near-optimal-pull-count / far-pull-mean-gap grids
-    (field="regrets", the per-pull noiseless regret already logged by
-    rf_tabular_bandit_experiment.py). Returns dict[label] -> list of per-run traces
-    (1-D np.ndarray) plus the resolved n_iterations.
+    (field="regrets", the per-pull noiseless regret). Returns dict[label] ->
+    list of per-run traces (1-D np.ndarray) plus the resolved n_iterations.
     """
     run_pattern = re.compile(rf"{re.escape(benchmark)}_(.+)_(\d+)iters_run(\d+)\.json$")
 
@@ -469,13 +473,12 @@ def plot_best_reward_per_run(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         out_path = (
-            output_dir / f"{benchmark}_best_reward_{n_iterations}iters_{exp_type}.pdf"
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{benchmark}_best_reward_{n_iterations}iters_{exp_type}.pdf"
         )
-        plt.savefig(out_path)
-        print(f"Saved to {out_path}")
+        save_figure(out_path)
 
     plt.show()
 
@@ -497,8 +500,7 @@ def plot_pull_concentration(
     from matplotlib.patches import Patch
 
     counts_by_algo, n_iterations = _load_pull_counts(benchmark, n_iterations)
-    # Canonical order + per-algorithm colors consistent with every other figure;
-    # this also drops any stale non-comparison series (e.g. removed baselines).
+    # Canonical order + per-algorithm colors consistent with every other figure.
     algorithms = _ordered(counts_by_algo.keys())
     rng = np.random.default_rng(0)
 
@@ -589,14 +591,12 @@ def plot_pull_concentration(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         out_path = (
-            output_dir
+            RESULTS_DIR
+            / "paper_plots"
             / f"{benchmark}_pull_concentration_{n_iterations}iters_{exp_type}.pdf"
         )
-        plt.savefig(out_path)
-        print(f"Saved to {out_path}")
+        save_figure(out_path)
 
     plt.show()
 
@@ -682,30 +682,27 @@ def plot_pull_concentration_grid(
 
     axes[0].set_ylabel("Pull count", fontweight="bold", fontsize=22)
 
-    fig.legend(
+    create_figure_legend(
+        fig,
         [
             Patch(facecolor="0.6", edgecolor="black"),
             Patch(facecolor="0.6", edgecolor="black", hatch="///"),
         ],
         ["Most-suggested arm", "Returned best config"],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
         ncol=2,
-        frameon=False,
-        prop={"size": 20, "family": "serif", "weight": "bold"},
+        fontsize=20,
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         tag = "_".join(benchmarks)
         out_path = (
-            output_dir / f"{tag}_pull_concentration_grid_{resolved}iters_{exp_type}.pdf"
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{tag}_pull_concentration_grid_{resolved}iters_{exp_type}.pdf"
         )
-        plt.savefig(out_path, bbox_inches="tight")
-        print(f"Saved to {out_path}")
+        save_figure(out_path, bbox_inches="tight")
 
     plt.show()
 
@@ -776,14 +773,12 @@ def plot_anytime_simple_regret(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         out_path = (
-            output_dir
+            RESULTS_DIR
+            / "paper_plots"
             / f"{benchmark}_anytime_simple_regret{name_suffix}_{n_iterations}iters_{exp_type}.pdf"
         )
-        plt.savefig(out_path)
-        print(f"Saved to {out_path}")
+        save_figure(out_path)
 
     plt.show()
 
@@ -931,14 +926,12 @@ def plot_noise_comparison(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         out_path = (
-            output_dir
+            RESULTS_DIR
+            / "paper_plots"
             / f"{benchmark}_noise_comparison_{n_iterations}iters_{exp_type}.pdf"
         )
-        plt.savefig(out_path)
-        print(f"Saved to {out_path}")
+        save_figure(out_path)
 
     plt.show()
 
@@ -1001,14 +994,12 @@ def plot_cumulative_regret_over_iterations(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         out_path = (
-            output_dir
+            RESULTS_DIR
+            / "paper_plots"
             / f"{benchmark}_cumulative_regret_{n_iterations}iters_{exp_type}.pdf"
         )
-        plt.savefig(out_path)
-        print(f"Saved to {out_path}")
+        save_figure(out_path)
 
     plt.show()
 
@@ -1088,13 +1079,12 @@ def plot_simple_regret_vs_iterations(
     plt.tight_layout()
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         out_path = (
-            output_dir / f"{benchmark}_simple_regret_vs_iterations_{exp_type}.pdf"
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{benchmark}_simple_regret_vs_iterations_{exp_type}.pdf"
         )
-        plt.savefig(out_path)
-        print(f"Saved to {out_path}")
+        save_figure(out_path)
 
     plt.show()
 
@@ -1157,24 +1147,13 @@ def plot_combined_regrets(
     ax2.spines["right"].set_visible(False)
 
     handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
-        ncol=len(algorithms),
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
-    )
+    create_figure_legend(fig, handles, labels, ncol=len(algorithms))
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        out_path = output_dir / f"{benchmark}_combined_regrets_{exp_type}.pdf"
-        plt.savefig(out_path, bbox_inches="tight")
-        print(f"Saved to {out_path}")
+        out_path = RESULTS_DIR / "paper_plots" / f"{benchmark}_combined_regrets_{exp_type}.pdf"
+        save_figure(out_path, bbox_inches="tight")
 
     plt.show()
 
@@ -1235,43 +1214,80 @@ def plot_cumulative_regret_grid(
     axes[0].set_ylabel("Cumulative Regret", fontweight="bold", fontsize=22)
 
     ordered_labels = _ordered(seen.keys())
-    fig.legend(
+    create_figure_legend(
+        fig,
         [seen[a] for a in ordered_labels],
         ordered_labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
         ncol=len(ordered_labels),
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         tag = "_".join(benchmarks)
-        out_path = output_dir / f"{tag}_cumulative_regret_grid_{exp_type}.pdf"
-        plt.savefig(out_path, bbox_inches="tight")
-        print(f"Saved to {out_path}")
+        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_cumulative_regret_grid_{exp_type}.pdf"
+        save_figure(out_path, bbox_inches="tight")
 
     plt.show()
 
 
-def plot_anytime_simple_regret_grid(
-    benchmarks=("rf146822", "rf31", "rf167120"),
-    n_iterations=None,
-    save_fig=False,
-    exp_type="hpo_finite",
-    algorithms=None,
-    logy=True,
-):
-    """Anytime simple regret vs iteration, one subplot per benchmark, side by side.
+def _identity_transform(runs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(mean, q25, q75) of the raw per-iteration trace, no further transform."""
+    mean = runs.mean(axis=0)
+    q25, q75 = np.percentile(runs, [25, 75], axis=0)
+    return mean, q25, q75
 
-    Mirrors plot_anytime_simple_regret (mean over runs + IQR band, reading
-    `simple_regret_trace` from the per-run JSONs) but tiles the three benchmarks
-    with fixed per-algorithm colors/markers and one shared legend. Pass
-    `algorithms` to restrict to a subset (e.g. _IMOSS_FAMILY).
+
+def _near_optimal_count_transform(epsilon: float):
+    """(mean, q25, q75) of the cumulative count of pulls with regret <= epsilon."""
+
+    def transform(regret_runs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        count_runs = np.cumsum(regret_runs <= epsilon, axis=1)
+        mean = count_runs.mean(axis=0)
+        q25, q75 = np.percentile(count_runs, [25, 75], axis=0)
+        return mean, q25, q75
+
+    return transform
+
+
+def _far_pull_mean_gap_transform(epsilon: float):
+    """(mean, q25, q75) of the running mean gap among regret > epsilon pulls."""
+
+    def transform(regret_runs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        far_mask = regret_runs > epsilon
+        far_regret = np.where(far_mask, regret_runs, 0.0)
+        far_count = np.cumsum(far_mask, axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean_gap_runs = np.cumsum(far_regret, axis=1) / far_count
+        mean_gap_runs[far_count == 0] = np.nan  # no far pull yet -- undefined
+        mean = np.nanmean(mean_gap_runs, axis=0)
+        q25 = np.nanpercentile(mean_gap_runs, 25, axis=0)
+        q75 = np.nanpercentile(mean_gap_runs, 75, axis=0)
+        return mean, q25, q75
+
+    return transform
+
+
+def _trace_grid(
+    benchmarks,
+    load_fn,
+    transform_fn,
+    ylabel,
+    out_name,
+    *,
+    n_iterations,
+    save_fig,
+    exp_type,
+    algorithms,
+    logy,
+    grid_which,
+    use_margins,
+):
+    """Shared engine behind the anytime trace grids (one subplot per benchmark,
+    mean + IQR band per algorithm, fixed canonical colors/markers, one shared
+    legend on top). `load_fn(benchmark, n_iterations) -> (traces_by_algo, budget)`
+    supplies the raw per-run traces; `transform_fn(runs) -> (mean, q25, q75)`
+    turns them into what gets plotted.
     """
     n = len(benchmarks)
     fig, axes = plt.subplots(1, n, figsize=(7 * n, 6))
@@ -1280,15 +1296,14 @@ def plot_anytime_simple_regret_grid(
 
     seen: dict[str, Any] = {}
     for ax, benchmark in zip(axes, benchmarks):
-        traces_by_algo, budget = _load_simple_regret_traces(benchmark, n_iterations)
+        traces_by_algo, budget = load_fn(benchmark, n_iterations)
         labels = algorithms if algorithms is not None else traces_by_algo.keys()
         labels = _ordered([a for a in labels if a in traces_by_algo])
 
         for algo in labels:
             runs = np.vstack(traces_by_algo[algo])  # n_runs x n_iterations
             iters = np.arange(1, runs.shape[1] + 1)
-            mean = runs.mean(axis=0)
-            q25, q75 = np.percentile(runs, [25, 75], axis=0)
+            mean, q25, q75 = transform_fn(runs)
             color, marker = _style_for(algo)
             (line,) = ax.plot(
                 iters,
@@ -1309,36 +1324,61 @@ def plot_anytime_simple_regret_grid(
         ax.set_title(_bench_title(benchmark), fontweight="bold", fontsize=22, pad=10)
         ax.tick_params(axis="both", which="major", labelsize=20)
         ax.set_axisbelow(True)
-        ax.grid(True, which="both", alpha=0.3)
+        ax.grid(True, which=grid_which, alpha=0.3)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        if use_margins:
+            ax.margins(y=0.08)
 
-    axes[0].set_ylabel(
-        "Simple Regret (best config so far)", fontweight="bold", fontsize=22
-    )
+    axes[0].set_ylabel(ylabel, fontweight="bold", fontsize=22)
 
     ordered_labels = _ordered(seen.keys())
-    fig.legend(
+    create_figure_legend(
+        fig,
         [seen[a] for a in ordered_labels],
         ordered_labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
         ncol=len(ordered_labels),
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
         tag = "_".join(benchmarks)
-        out_path = output_dir / f"{tag}_anytime_simple_regret_grid_{exp_type}.pdf"
-        plt.savefig(out_path, bbox_inches="tight")
-        print(f"Saved to {out_path}")
+        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_{out_name}_{exp_type}.pdf"
+        save_figure(out_path, bbox_inches="tight")
 
     plt.show()
+
+
+def plot_anytime_simple_regret_grid(
+    benchmarks=("rf146822", "rf31", "rf167120"),
+    n_iterations=None,
+    save_fig=False,
+    exp_type="hpo_finite",
+    algorithms=None,
+    logy=True,
+):
+    """Anytime simple regret vs iteration, one subplot per benchmark, side by side.
+
+    Mirrors plot_anytime_simple_regret (mean over runs + IQR band, reading
+    `simple_regret_trace` from the per-run JSONs) but tiles the three benchmarks
+    with fixed per-algorithm colors/markers and one shared legend. Pass
+    `algorithms` to restrict to a subset (e.g. _IMOSS_FAMILY).
+    """
+    _trace_grid(
+        benchmarks,
+        _load_simple_regret_traces,
+        _identity_transform,
+        "Simple Regret (best config so far)",
+        "anytime_simple_regret_grid",
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        exp_type=exp_type,
+        algorithms=algorithms,
+        logy=logy,
+        grid_which="both",
+        use_margins=False,
+    )
 
 
 def plot_near_optimal_pull_count_grid(
@@ -1352,82 +1392,31 @@ def plot_near_optimal_pull_count_grid(
     """Cumulative count of pulls landing on a near-optimal arm (noiseless regret
     <= epsilon), vs iteration, one subplot per benchmark.
 
-    Built from the per-pull noiseless regret already logged in `regrets` -- no
-    rerun needed. The optimizer whose curve climbs fastest here is the one
-    paying near-zero gaps most often; pair with plot_far_pull_mean_gap_grid to
-    see how costly its misses are (that band contributes little of the total
-    cumulative regret -- most of it comes from the misses' average gap size).
+    Built from the per-pull noiseless regret (`regrets`). The optimizer whose
+    curve climbs fastest here is the one paying near-zero gaps most often;
+    pair with plot_far_pull_mean_gap_grid to see how costly its misses are
+    (that band contributes little of the total cumulative regret -- most of
+    it comes from the misses' average gap size).
 
     `epsilon` sets the near-optimal band in accuracy units (default 0.01, i.e.
     within 1 point of the true best -- chosen so all three benchmarks have a
     comparable-sized near-optimal arm set, roughly the top 1-12%).
     """
-    n = len(benchmarks)
-    fig, axes = plt.subplots(1, n, figsize=(7 * n, 6))
-    if n == 1:
-        axes = [axes]
-
-    seen: dict[str, Any] = {}
-    for ax, benchmark in zip(axes, benchmarks):
-        traces_by_algo, budget = _load_trace_field(benchmark, n_iterations, "regrets")
-        labels = algorithms if algorithms is not None else traces_by_algo.keys()
-        labels = _ordered([a for a in labels if a in traces_by_algo])
-
-        for algo in labels:
-            regret_runs = np.vstack(traces_by_algo[algo])  # n_runs x n_iterations
-            iters = np.arange(1, regret_runs.shape[1] + 1)
-            count_runs = np.cumsum(regret_runs <= epsilon, axis=1)
-            mean = count_runs.mean(axis=0)
-            q25, q75 = np.percentile(count_runs, [25, 75], axis=0)
-            color, marker = _style_for(algo)
-            (line,) = ax.plot(
-                iters,
-                mean,
-                color=color,
-                label=algo,
-                marker=marker,
-                markevery=max(1, len(iters) // 8),
-                linewidth=2.0,
-                markersize=8,
-            )
-            ax.fill_between(iters, q25, q75, color=color, alpha=0.15, linewidth=0)
-            seen.setdefault(algo, line)
-
-        ax.set_xlabel("Iteration", fontweight="bold", fontsize=22)
-        ax.set_title(_bench_title(benchmark), fontweight="bold", fontsize=22, pad=10)
-        ax.tick_params(axis="both", which="major", labelsize=20)
-        ax.set_axisbelow(True)
-        ax.grid(True, alpha=0.3)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.margins(y=0.08)
-
-    axes[0].set_ylabel(
-        f"Pulls with regret ≤ {epsilon:g}", fontweight="bold", fontsize=22
+    load_fn = partial(_load_trace_field, field="regrets")
+    _trace_grid(
+        benchmarks,
+        load_fn,
+        _near_optimal_count_transform(epsilon),
+        f"Pulls with regret ≤ {epsilon:g}",
+        "near_optimal_pull_count_grid",
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        exp_type=exp_type,
+        algorithms=algorithms,
+        logy=False,
+        grid_which="major",
+        use_margins=True,
     )
-
-    ordered_labels = _ordered(seen.keys())
-    fig.legend(
-        [seen[a] for a in ordered_labels],
-        ordered_labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
-        ncol=len(ordered_labels),
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
-    )
-
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-
-    if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        tag = "_".join(benchmarks)
-        out_path = output_dir / f"{tag}_near_optimal_pull_count_grid_{exp_type}.pdf"
-        plt.savefig(out_path, bbox_inches="tight")
-        print(f"Saved to {out_path}")
-
-    plt.show()
 
 
 def plot_far_pull_mean_gap_grid(
@@ -1452,83 +1441,23 @@ def plot_far_pull_mean_gap_grid(
     when the latter lands in the band more often -- explaining cases where more
     near-optimal pulls does NOT mean lower cumulative regret.
 
-    Built from the `regrets` field already logged (no rerun needed).
+    Built from the per-pull noiseless regret (`regrets`).
     """
-    n = len(benchmarks)
-    fig, axes = plt.subplots(1, n, figsize=(7 * n, 6))
-    if n == 1:
-        axes = [axes]
-
-    seen: dict[str, Any] = {}
-    for ax, benchmark in zip(axes, benchmarks):
-        traces_by_algo, budget = _load_trace_field(benchmark, n_iterations, "regrets")
-        labels = algorithms if algorithms is not None else traces_by_algo.keys()
-        labels = _ordered([a for a in labels if a in traces_by_algo])
-
-        for algo in labels:
-            regret_runs = np.vstack(traces_by_algo[algo])  # n_runs x n_iterations
-            iters = np.arange(1, regret_runs.shape[1] + 1)
-            far_mask = regret_runs > epsilon
-            far_regret = np.where(far_mask, regret_runs, 0.0)
-            far_count = np.cumsum(far_mask, axis=1)
-            with np.errstate(invalid="ignore", divide="ignore"):
-                mean_gap_runs = np.cumsum(far_regret, axis=1) / far_count
-            mean_gap_runs[far_count == 0] = np.nan  # no far pull yet -- undefined
-
-            mean = np.nanmean(mean_gap_runs, axis=0)
-            q25 = np.nanpercentile(mean_gap_runs, 25, axis=0)
-            q75 = np.nanpercentile(mean_gap_runs, 75, axis=0)
-            color, marker = _style_for(algo)
-            (line,) = ax.plot(
-                iters,
-                mean,
-                color=color,
-                label=algo,
-                marker=marker,
-                markevery=max(1, len(iters) // 8),
-                linewidth=2.0,
-                markersize=8,
-            )
-            ax.fill_between(iters, q25, q75, color=color, alpha=0.15, linewidth=0)
-            seen.setdefault(algo, line)
-
-        if logy:
-            ax.set_yscale("log")
-        ax.set_xlabel("Iteration", fontweight="bold", fontsize=22)
-        ax.set_title(_bench_title(benchmark), fontweight="bold", fontsize=22, pad=10)
-        ax.tick_params(axis="both", which="major", labelsize=20)
-        ax.set_axisbelow(True)
-        ax.grid(True, which="both", alpha=0.3)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.margins(y=0.08)
-
-    axes[0].set_ylabel(
-        f"Mean gap of pulls with regret > {epsilon:g}", fontweight="bold", fontsize=22
+    load_fn = partial(_load_trace_field, field="regrets")
+    _trace_grid(
+        benchmarks,
+        load_fn,
+        _far_pull_mean_gap_transform(epsilon),
+        f"Mean gap of pulls with regret > {epsilon:g}",
+        "far_pull_mean_gap_grid",
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        exp_type=exp_type,
+        algorithms=algorithms,
+        logy=logy,
+        grid_which="both",
+        use_margins=True,
     )
-
-    ordered_labels = _ordered(seen.keys())
-    fig.legend(
-        [seen[a] for a in ordered_labels],
-        ordered_labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.08),
-        ncol=len(ordered_labels),
-        frameon=False,
-        prop={"size": 22, "family": "serif", "weight": "bold"},
-    )
-
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-
-    if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(exist_ok=True)
-        tag = "_".join(benchmarks)
-        out_path = output_dir / f"{tag}_far_pull_mean_gap_grid_{exp_type}.pdf"
-        plt.savefig(out_path, bbox_inches="tight")
-        print(f"Saved to {out_path}")
-
-    plt.show()
 
 
 if __name__ == "__main__":

@@ -11,11 +11,13 @@ from experiments.utils.plots.plot_configs import (
     set_research_style,
     get_algorithm_color,
     create_figure_legend,
+    save_figure,
 )
 
 RESULTS_DIR = Path(__file__).parents[3] / "results" / "hotpotqa"
 
 ALGO_DISPLAY_NAMES = {
+    "IMABO": "I-MOSS-TPE",
     "IMABO-noTPE": "I-MOSS",
 }
 
@@ -137,11 +139,8 @@ def plot_hotpotqa_results(
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"hotpotqa_results_{n_samples}samples.pdf"
-        plt.savefig(path, bbox_inches="tight")
-        print(f"Saved to {path}")
+        path = RESULTS_DIR / "paper_plots" / f"hotpotqa_results_{n_samples}samples.pdf"
+        save_figure(path, bbox_inches="tight", parents=True)
 
     plt.show()
 
@@ -297,11 +296,8 @@ def plot_config_analysis(
         )
 
     if save_fig:
-        output_dir = RESULTS_DIR / "paper_plots"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"hotpotqa_config_analysis_{n_samples}samples.pdf"
-        plt.savefig(path, bbox_inches="tight")
-        print(f"Saved to {path}")
+        path = RESULTS_DIR / "paper_plots" / f"hotpotqa_config_analysis_{n_samples}samples.pdf"
+        save_figure(path, bbox_inches="tight", parents=True)
 
     plt.show()
 
