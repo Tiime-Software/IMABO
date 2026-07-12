@@ -1,20 +1,17 @@
-"""Finite-armed Bernoulli bandit built from HPOBench's real RF tabular benchmark.
+"""Finite-armed Bernoulli bandit built from a real RandomForest tabular benchmark.
 
-Ground truth: validation accuracy of a scikit-learn RandomForestClassifier on
-OpenML task 9952 (phoneme), evaluated at HPOBench's max fidelity
-(n_estimators=512, subsample=1) and averaged over the 5 seeds HPOBench
-provides, for every point on its own discretized hyperparameter grid
-(9 values of max_depth x 10 of max_features x 10 of min_samples_leaf x 10 of
-min_samples_split = 9000 configs, see experiments/benchmarks/assets/rf_9952_grid.csv).
+Ground truth is the validation accuracy of a scikit-learn
+RandomForestClassifier on an OpenML classification task, evaluated at
+HPOBench's precomputed max fidelity (n_estimators=512, subsample=1) and
+averaged over 5 training seeds, for every point of a discretized
+hyperparameter grid (9 values of max_depth x 10 of max_features x 10 of
+min_samples_leaf x 10 of min_samples_split = 9000 configurations per task).
 
-This module coarsens that grid to a smaller finite arm set and turns the
+This module coarsens that grid to a smaller finite arm set and turns each
 looked-up accuracy into a genuine Bernoulli success probability: pulling an
-arm draws one Bernoulli(f(x)) sample rather than returning the (already
-averaged) accuracy directly. This is the natural regime for the finite-armed
-bandit indices already in this repo (kl_ucb, moss_anytime, ucb in imabo/moss.py).
-
-Since the arm set is finite and precomputed, the optimum is known exactly and
-regret is exact (no need to re-run the actual RandomForestClassifier).
+arm draws one Bernoulli(accuracy) sample rather than returning the accuracy
+directly. Since the arm set is finite and precomputed, the optimum is known
+exactly and regret is exact -- no need to re-fit the RandomForestClassifier.
 """
 
 from pathlib import Path
@@ -22,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DATA_PATH = Path(__file__).parent / "assets" / "rf_9952_grid.csv"
+DATA_PATH = Path(__file__).parent / "assets" / "rf_{bm_id}_grid.csv"
 
 PARAM_NAMES = ["max_depth", "max_features", "min_samples_leaf", "min_samples_split"]
 
@@ -42,6 +39,7 @@ class RFTabularFiniteBenchmark:
         metric: str = "val_acc",
         noise_std: float = 0.0,
         seed: int = 0,
+        bm_id: int = 9952,
     ):
         n_values = n_values or {
             "max_depth": 10,
@@ -51,7 +49,7 @@ class RFTabularFiniteBenchmark:
         }
         assert metric in ("val_acc", "test_acc")
 
-        table = pd.read_csv(DATA_PATH)
+        table = pd.read_csv(str(DATA_PATH).format(bm_id=bm_id))
         self.axes: dict[str, list[float]] = {}
         for name in PARAM_NAMES:
             unique_sorted = np.sort(table[name].unique())
@@ -70,12 +68,26 @@ class RFTabularFiniteBenchmark:
             for row in grid.to_dict("records")
         }
         self.n_arms = len(self.lookup)
+        self.bm_id = bm_id
         self.noise_std = noise_std
         self.rng = np.random.default_rng(seed)
 
         self.best_config: dict[str, float] = max(self.lookup, key=self.lookup.get)
         self.best_config = dict(zip(PARAM_NAMES, self.best_config))
         self.max_value = self.lookup[tuple(self.best_config[n] for n in PARAM_NAMES)]
+
+    def reset_noise(self, seed: int) -> None:
+        """Re-seed the Bernoulli noise stream for an independent run.
+
+        `self.rng` otherwise keeps advancing across every call to this same
+        instance -- if one benchmark object is reused across several runs
+        (e.g. rf_tabular_bandit_experiment.py's `bench`, shared across every
+        algorithm and best_config_strategy), later runs silently see a noise
+        sequence that depends on how much noise every prior run consumed,
+        breaking reproducibility and any seed-controlled comparison between
+        them. Call this at the start of each independent run instead.
+        """
+        self.rng = np.random.default_rng(seed)
 
     def get_search_space(self) -> dict[str, dict]:
         """Categorical search space, one entry per hyperparameter."""
@@ -98,10 +110,3 @@ class RFTabularFiniteBenchmark:
 
     def regret(self, x: dict) -> float:
         return self.max_value - self.mean_reward(x)
-
-
-if __name__ == "__main__":
-    bench = RFTabularFiniteBenchmark()
-    print(f"n_arms = {bench.n_arms}")
-    print(f"best_config = {bench.best_config}")
-    print(f"max_value (val_acc) = {bench.max_value:.4f}")

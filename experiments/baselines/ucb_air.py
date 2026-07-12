@@ -24,9 +24,9 @@ regularity used throughout the IMAB literature).  It has two moving parts:
      always tried once immediately -- this is how AIR injects breadth.
 
 Same generator-based interface as the other baselines (suggest / observe /
-best_config).  Rewards are assumed already normalised to [0, 1] by the caller
-(the toy harness does this); the recommendation is the active arm with the
-highest empirical mean among those pulled at least once.
+best_config).  Rewards are assumed already normalised to [0, 1] by the caller;
+the recommendation is the active arm with the highest empirical mean among
+those pulled at least once.
 
 Reference: Y. Wang, J.-Y. Audibert, R. Munos, "Algorithms for Infinitely
 Many-Armed Bandits", NeurIPS 2008.

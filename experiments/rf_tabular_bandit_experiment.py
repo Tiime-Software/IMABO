@@ -1,24 +1,22 @@
-"""Finite-armed HPO experiment on a real RF tabular Bernoulli bandit.
+"""Hyperparameter optimization as a finite-armed Bernoulli bandit.
 
-Ground truth: HPOBench's precomputed RandomForest accuracy grid on OpenML
-task 9952 (phoneme), coarsened to a finite categorical search space and
-converted to Bernoulli(accuracy) rewards -- see
-experiments/benchmarks/tabular_finite.py for how the grid was built.
+Each arm is a RandomForest hyperparameter configuration from a real OpenML
+tabular benchmark; pulling an arm draws a Bernoulli sample whose success
+probability is that configuration's validation accuracy. Because the arm set
+is finite and its accuracies are precomputed, both the optimum and the regret
+of every pull are known exactly, with no model re-fitting required.
 
-Since the arm set is finite and known, optimum and regret are exact (no
-re-fitting): each optimizer runs directly against the lookup table.
-
-Like experiments/hotpotqa_experiment.py, this runs ONE algorithm per
-invocation and saves that algorithm's results to its own file (per-run JSON
-checkpoints + a per-algorithm summary/iterations CSV). That way re-running or
-adding an algorithm (e.g. the slow TabFM one) never requires re-running the
-others -- just change `algorithm` in main() and re-invoke.
+Compares the IMOSS bandit framework -- with a TPE, uniform, or TabFM proposal
+oracle -- against classic infinite-armed bandit baselines, across benchmarks
+spanning easy to hard reward-noise regimes. Each run is checkpointed to its
+own file, so re-running only completes missing seeds or algorithms.
 
 Usage (from repo root):
-    python -m experiments.hpo_finite_experiment
+    python -m experiments.rf_tabular_bandit_experiment
 """
 
 import json
+from collections import Counter
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -26,15 +24,16 @@ from typing import Any
 from tqdm import tqdm
 
 from experiments.baselines.random_search import RandomSearch
-from experiments.baselines.ucb_air import MOSSAIR, UCBAIR
-from experiments.benchmarks.tabular_finite import RFTabularFiniteBenchmark
+from experiments.baselines.ucb_air import UCBAIR
+from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
 from experiments.utils.stats import (
     calculate_statistics,
     save_iterations_to_csv,
     save_results_to_csv,
 )
 from imabo import IMABO
-from imabo.tabfm_optimizer import TabFMIMABO, load_tabfm
+from imabo.memory import config_to_key
+from imabo.optimizer import TabFMIMABO, load_tabfm
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -48,7 +47,6 @@ class Algorithm(Enum):
     RANDOM = "Random Search"
     IMOSS_TABFM = "IMOSS-TabFM"
     UCB_AIR = "UCB-AIR"
-    MOSS_AIR = "MOSS-AIR"
 
 
 def algo_slug(algorithm: Algorithm) -> str:
@@ -68,7 +66,6 @@ def build_optimizer(
             seed=seed,
             multivariate=True,
             beta=BETA,
-            tpe_split_bound="lcb",
         )
     elif algorithm == Algorithm.IMOSS:
         return IMABO(
@@ -83,12 +80,16 @@ def build_optimizer(
     elif algorithm == Algorithm.IMOSS_TABFM:
         model = tabfm_model if tabfm_model is not None else load_tabfm()
         return TabFMIMABO(
-            search_space=search_space, seed=seed, tabfm_model=model, beta=BETA
+            search_space=search_space,
+            seed=seed,
+            tabfm_model=model,
+            beta=BETA,
         )
     elif algorithm == Algorithm.UCB_AIR:
-        return UCBAIR(search_space=search_space, seed=seed)
-    elif algorithm == Algorithm.MOSS_AIR:
-        return MOSSAIR(search_space=search_space, seed=seed)
+        return UCBAIR(
+            search_space=search_space,
+            seed=seed,
+        )
 
 
 def run_single_experiment(
@@ -107,29 +108,53 @@ def run_single_experiment(
     rather than the search-space/optimizer mechanics themselves.
     """
     opt = build_optimizer(algorithm, bench.get_search_space(), seed, tabfm_model)
+    param_names = sorted(bench.get_search_space().keys())
 
     regrets = []
+    # Anytime simple regret: at each step, the true regret of the config the
+    # optimizer would RETURN as best if stopped now (its actual selection
+    # strategy applied to the current state) -- lets us plot convergence of the
+    # returned answer over the budget, not just the final scalar simple_regret.
+    simple_regret_trace = []
+    suggestion_counts: Counter = Counter()
     for _ in tqdm(range(n_iterations), desc=algorithm.value, leave=False):
         x = opt.suggest()
         y = bench(x, noise=noise)
         opt.observe(y)
         regrets.append(bench.regret(x))  # noiseless regret
+        suggestion_counts[config_to_key(x, param_names)] += 1
+        incumbent = opt.best_config
+        simple_regret_trace.append(
+            bench.regret(incumbent) if incumbent is not None else bench.max_value
+        )
 
     best = opt.best_config
     simple_regret = bench.regret(best) if best is not None else bench.max_value
     best_reward = bench.mean_reward(best) if best is not None else None
+
+    best_key = config_to_key(best, param_names) if best is not None else None
+    most_suggested_key, most_suggested_count = (
+        suggestion_counts.most_common(1)[0] if suggestion_counts else (None, 0)
+    )
     return {
         "regrets": regrets,
+        "simple_regret_trace": simple_regret_trace,
         "simple_regrets": simple_regret,
         "best_config": best,
         "best_reward": best_reward,
+        "best_config_suggestions": (
+            suggestion_counts[best_key] if best_key is not None else 0
+        ),
+        "most_suggested_count": most_suggested_count,
+        "is_best_most_suggested": best_key is not None
+        and best_key == most_suggested_key,
     }
 
 
-def benchmark_tag(noise: bool) -> str:
-    """Filename prefix -- keeps the noiseless ablation's files from ever
-    colliding with (or overwriting) the normal Bernoulli-reward results."""
-    return "rf9952" if noise else "rf9952noiseless"
+def benchmark_tag(bm_id: int, noise: bool) -> str:
+    """Filename prefix -- keeps different benchmarks (bm_id) and the noiseless
+    ablation's files from ever colliding with (or overwriting) each other."""
+    return f"rf{bm_id}" if noise else f"rf{bm_id}noiseless"
 
 
 def run_multiple_experiments(
@@ -147,7 +172,7 @@ def run_multiple_experiments(
     disk is loaded instead of re-executed, so re-running this (e.g. after
     adding more runs or budgets) never re-does completed work.
     """
-    stem = f"{benchmark_tag(noise)}_{algo_slug(algorithm)}_{n_iterations}iters"
+    stem = f"{benchmark_tag(bench.bm_id, noise)}_{algo_slug(algorithm)}_{n_iterations}iters"
     all_results = []
     for i in tqdm(range(n_runs), desc=f"  T={n_iterations} runs", leave=True):
         seed = base_seed + i
@@ -175,7 +200,7 @@ def run_experiment(
     bench, n_runs, base_seed, n_iter, algorithm: Algorithm, noise: bool = True
 ):
     dim = len(bench.get_search_space())
-    tag = benchmark_tag(noise)
+    tag = benchmark_tag(bench.bm_id, noise)
 
     tabfm_model = load_tabfm() if algorithm == Algorithm.IMOSS_TABFM else None
     if tabfm_model is not None:
@@ -211,26 +236,26 @@ if __name__ == "__main__":
     n_runs = 10
     base_seed = 42
     n_iter = 5000
-    bench = RFTabularFiniteBenchmark()
-    dim = len(bench.get_search_space())
-    print("Search space:")
-    for name, values in bench.get_search_space().items():
-        print(f"  {name}: {values['choices']}")
-    print(
-        f"RF tabular finite benchmark (OpenML task 9952, phoneme): "
-        f"{bench.n_arms} arms, best val_acc={bench.max_value:.4f}, "
-        f"best_config={bench.best_config}"
-    )
+    # OpenML task_ids to run, spanning reward-noise regimes (all built via
+    # experiments.benchmarks.build_rf_tabular_grid): 146822 segment (clean/well-separated),
+    # 31 credit-g (mid-range, noisy Bernoulli), 167120 numerai28.6 (near-random, hard).
+    bm_ids = [146822, 31, 167120]
     algorithms = [
         Algorithm.IMOSS_TPE,
         Algorithm.IMOSS,
         Algorithm.IMOSS_TABFM,
         Algorithm.UCB_AIR,
-        Algorithm.MOSS_AIR,
     ]
-    # Bernoulli-reward runs (noise=True) are already cached on disk from
-    # before and get skipped; noise=False is the ablation checking how much
-    # of the run-to-run spread/outliers comes from reward noise itself.
-    for noise in (True, False):
+
+    for bm_id in bm_ids:
+        bench = RFTabularFiniteBenchmark(bm_id=bm_id)
+        print("Search space:")
+        for name, values in bench.get_search_space().items():
+            print(f"  {name}: {values['choices']}")
+        print(
+            f"RF tabular finite benchmark (OpenML task {bm_id}): "
+            f"{bench.n_arms} arms, best val_acc={bench.max_value:.4f}, "
+            f"best_config={bench.best_config}"
+        )
         for algorithm in algorithms:
-            run_experiment(bench, n_runs, base_seed, n_iter, algorithm, noise=noise)
+            run_experiment(bench, n_runs, base_seed, n_iter, algorithm)

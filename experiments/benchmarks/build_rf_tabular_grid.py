@@ -1,15 +1,19 @@
-"""Build the compact accuracy grid CSV consumed by experiments.benchmarks.tabular_finite.
+"""Build a compact hyperparameter-accuracy grid CSV for one OpenML task.
 
-Downloads HPOBench's precomputed ML tabular benchmark (a per-model zip on
-figshare, one parquet per OpenML task_id), extracts a single task_id, fixes a
-fidelity level, and averages validation/test accuracy over HPOBench's seeds
-for every point of its discretized hyperparameter grid. The zip itself is
-cached under experiments/benchmarks/.cache/ (gitignored) so re-running for a
-different task_id does not re-download ~400MB every time.
+This grid is the ground truth for the finite-armed RandomForest tabular
+bandit benchmark: one row per point of a discretized hyperparameter grid,
+with validation and test accuracy averaged over several training seeds.
+
+Downloads HPOBench's precomputed RandomForest tabular benchmark (a per-model
+zip hosted on figshare, containing one parquet file per OpenML task_id),
+extracts a single task_id, fixes a fidelity level, and averages validation
+and test accuracy over HPOBench's seeds for every grid point. The zip is
+cached locally so re-running for a different task_id does not re-download
+the ~400MB archive each time.
 
 Usage (from repo root):
-    python -m experiments.benchmarks.build_rf_grid --task-id 9952
-    python -m experiments.benchmarks.build_rf_grid --task-id 31 --fidelity max
+    python -m experiments.benchmarks.build_rf_tabular_grid --task-id 9952
+    python -m experiments.benchmarks.build_rf_tabular_grid --task-id 31 --fidelity max
 """
 
 import argparse
