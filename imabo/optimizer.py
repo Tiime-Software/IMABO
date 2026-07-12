@@ -537,7 +537,7 @@ def load_tabfm(model_type: str = "regression") -> Any:
 
     Imports tabfm/huggingface_hub/safetensors lazily (only when this function
     is called) so that importing this module never requires those optional
-    dependencies -- only constructing or using :class:`TabFMIMABO` does.
+    dependencies -- only constructing or using :class:`IMABOTabFM` does.
     """
     from huggingface_hub import snapshot_download
     from safetensors.torch import load_file
@@ -559,7 +559,7 @@ def load_tabfm(model_type: str = "regression") -> Any:
     return model
 
 
-class TabFMIMABO(IMABO):
+class IMABOTabFM(IMABO):
     """IMABO variant where the explore oracle is TabFM instead of TPE.
 
     Same switching rule as :class:`IMABO` (beta/delayed) and the same
@@ -572,7 +572,7 @@ class TabFMIMABO(IMABO):
     the highest score is proposed.
 
     Example:
-        >>> optimizer = TabFMIMABO(
+        >>> optimizer = IMABOTabFM(
         ...     search_space={"x0": {"choices": [0, 1, 2, 3, 4, 5]}},
         ...     min_arms_for_fit=10,
         ... )
@@ -603,7 +603,7 @@ class TabFMIMABO(IMABO):
         tabfm_model: Any | None = None,
         tabfm_kwargs: dict[str, Any] | None = None,
     ):
-        """Initialize TabFMIMABO.
+        """Initialize IMABOTabFM.
 
         Args:
             search_space: Dictionary defining the search space (same format

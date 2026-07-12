@@ -33,7 +33,7 @@ from experiments.utils.stats import (
 )
 from imabo import IMABO
 from imabo.memory import config_to_key
-from imabo.optimizer import TabFMIMABO, load_tabfm
+from imabo.optimizer import IMABOTabFM, load_tabfm
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -79,7 +79,7 @@ def build_optimizer(
         return RandomSearch(search_space=search_space, seed=seed)
     elif algorithm == Algorithm.IMOSS_TABFM:
         model = tabfm_model if tabfm_model is not None else load_tabfm()
-        return TabFMIMABO(
+        return IMABOTabFM(
             search_space=search_space,
             seed=seed,
             tabfm_model=model,

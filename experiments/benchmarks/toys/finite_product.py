@@ -285,7 +285,7 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    from imabo import IMABO, TabFMIMABO
+    from imabo import IMABO, IMABOTabFM
     from tqdm import tqdm
     from experiments.baselines.random_search import RandomSearch
     import matplotlib.pyplot as plt
@@ -332,7 +332,7 @@ if __name__ == "__main__":
                 use_tpe=False,
             ),
             "Random Search": RandomSearch(search_space=fn.get_search_space(), seed=0),
-            "TabFM-IMABO": TabFMIMABO(
+            "TabFM-IMABO": IMABOTabFM(
                 search_space=fn.get_search_space(),
                 seed=0,
             ),

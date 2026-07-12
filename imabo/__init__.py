@@ -15,7 +15,7 @@ from imabo.moss import (
     ucb,
     ucb_siri,
 )
-from imabo.optimizer import IMABO, FiniteIMABO, TabFMIMABO
+from imabo.optimizer import IMABO, FiniteIMABO, IMABOTabFM
 from imabo.tpe import default_gamma, default_weights, hyperopt_default_gamma
 from imabo.types import ArmConfig, ArmKey
 
@@ -23,7 +23,7 @@ __all__ = [
     # Optimizers
     "IMABO",
     "FiniteIMABO",
-    "TabFMIMABO",
+    "IMABOTabFM",
     # Memory
     "InMemoryStorage",
     "Memory",
