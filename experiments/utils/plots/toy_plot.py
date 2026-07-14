@@ -142,7 +142,9 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
 
         ax.set_xlabel("Simple Regret", fontweight="bold", fontsize=22)
         if ax_idx == 0:
-            ax.set_ylabel("Cumulative Regret", fontweight="bold", fontsize=22)
+            ax.set_ylabel(
+                "Normalized Cumulative Regret", fontweight="bold", fontsize=22
+            )
         ax.set_title(benchmark.upper(), fontweight="bold", fontsize=24, pad=15)
         ax.tick_params(axis="both", which="major", labelsize=30)
         ax.set_axisbelow(True)
@@ -150,7 +152,9 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
         ax.spines["right"].set_visible(False)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    create_figure_legend(fig, handles, labels, ncol=len(algorithms), bbox_y=1.05, fontsize=30)
+    create_figure_legend(
+        fig, handles, labels, ncol=len(algorithms), bbox_y=1.05, fontsize=30
+    )
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 

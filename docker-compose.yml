@@ -27,4 +27,4 @@ services:
       - "8000:8000"
     volumes:
       - .:/workspace
-    command: bash -lc "source /etc/profile.d/conda.sh && conda activate hpo && python benchmarks/hpo_bench/server.py"
+    command: bash -lc "source /etc/profile.d/conda.sh && conda activate hpo && python experiments/benchmarks/hpo_bench/server.py"

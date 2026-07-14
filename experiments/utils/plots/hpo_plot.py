@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+from experiments.hpo_experiment import BETA
 from experiments.utils.plots.plot_configs import (
     confidence_ellipse,
     create_figure_legend,
@@ -23,7 +24,9 @@ RESULTS_DIR = Path(__file__).parents[3] / "results"
 set_research_style()
 
 
-def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"):
+def plot_performance_trajectories(
+    benchmark="lr", save_fig=False, exp_type="hpo", beta=BETA
+):
     """
     Plot performance trajectories showing simple regret vs cumulative regret (total regret).
     Each algorithm gets a line connecting points for different evaluation budgets.
@@ -32,9 +35,10 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
         benchmark: Name of the benchmark (e.g., 'lr', 'svm', 'rf')
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
+        beta: Beta value used for the run, for filename
     """
     # Read summary CSV
-    csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_summary.csv"
+    csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     df = pd.read_csv(csv_file)
 
     # Check if we have raw data arrays for confidence ellipses
@@ -230,7 +234,7 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
         out_path = (
             RESULTS_DIR
             / "paper_plots"
-            / f"{benchmark}_performance_trajectories_{exp_type}.pdf"
+            / f"{benchmark}_performance_trajectories_{exp_type}_beta_{beta}.pdf"
         )
         save_figure(out_path)
 
@@ -238,7 +242,7 @@ def plot_performance_trajectories(benchmark="lr", save_fig=False, exp_type="hpo"
 
 
 def plot_cumulative_regret_over_iterations(
-    benchmark="lr", n_iterations=10000, save_fig=False, exp_type="hpo"
+    benchmark="lr", n_iterations=10000, save_fig=False, exp_type="hpo", beta=BETA
 ):
     """
     Plot cumulative regret over iterations for all algorithms at a specific iteration budget.
@@ -248,9 +252,10 @@ def plot_cumulative_regret_over_iterations(
         n_iterations: Number of iterations to plot (default: 10000)
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
+        beta: Beta value used for the run, for filename
     """
     # Read iterations CSV
-    csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_iterations.csv"
+    csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
     df = pd.read_csv(csv_file)
 
     # Filter for the specific iteration count
@@ -328,14 +333,16 @@ def plot_cumulative_regret_over_iterations(
         out_path = (
             RESULTS_DIR
             / "paper_plots"
-            / f"{benchmark}_cumulative_regret_{n_iterations}iters_{exp_type}.pdf"
+            / f"{benchmark}_cumulative_regret_{n_iterations}iters_{exp_type}_beta_{beta}.pdf"
         )
         save_figure(out_path)
 
     plt.show()
 
 
-def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="hpo"):
+def plot_simple_regret_vs_iterations(
+    benchmark="lr", save_fig=False, exp_type="hpo", beta=BETA
+):
     """
     Plot simple regret for all algorithms across different iteration budgets.
     Inspired by plot_simple_regret_k_experiment from ablation_plot.py
@@ -344,9 +351,10 @@ def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="h
         benchmark: Name of the benchmark (e.g., 'lr', 'svm', 'rf')
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
+        beta: Beta value used for the run, for filename
     """
     # Read summary CSV
-    csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_summary.csv"
+    csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     df = pd.read_csv(csv_file)
 
     # Get unique algorithms
@@ -414,7 +422,7 @@ def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="h
         out_path = (
             RESULTS_DIR
             / "paper_plots"
-            / f"{benchmark}_simple_regret_vs_iterations_{exp_type}.pdf"
+            / f"{benchmark}_simple_regret_vs_iterations_{exp_type}_beta_{beta}.pdf"
         )
         save_figure(out_path)
 
@@ -422,7 +430,7 @@ def plot_simple_regret_vs_iterations(benchmark="lr", save_fig=False, exp_type="h
 
 
 def plot_combined_regrets(
-    benchmark="lr", n_iterations=10000, save_fig=False, exp_type="hpo"
+    benchmark="lr", n_iterations=10000, save_fig=False, exp_type="hpo", beta=BETA
 ):
     """
     Plot cumulative regret and simple regret as subplots with common legend.
@@ -432,10 +440,11 @@ def plot_combined_regrets(
         n_iterations: Number of iterations for cumulative regret plot
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
+        beta: Beta value used for the run, for filename
     """
     # Read both CSVs
-    iterations_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_iterations.csv"
-    summary_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_summary.csv"
+    iterations_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
+    summary_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
 
     df_iterations = pd.read_csv(iterations_csv)
     df_summary = pd.read_csv(summary_csv)
@@ -535,7 +544,9 @@ def plot_combined_regrets(
 
     if save_fig:
         out_path = (
-            RESULTS_DIR / "paper_plots" / f"{benchmark}_combined_regrets_{exp_type}.pdf"
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{benchmark}_combined_regrets_{exp_type}_beta_{beta}.pdf"
         )
         save_figure(out_path, bbox_inches="tight")
 
@@ -547,4 +558,7 @@ if __name__ == "__main__":
         print(f"Generating combined regrets plot for {benchmark.upper()}...")
         plot_combined_regrets(
             benchmark=benchmark, n_iterations=10000, save_fig=True, exp_type="hpo"
+        )
+        plot_performance_trajectories(
+            benchmark=benchmark, save_fig=True, exp_type="hpo"
         )

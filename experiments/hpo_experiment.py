@@ -37,6 +37,7 @@ from imabo import IMABO
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
+BETA = 0.5
 
 
 class Algorithm(Enum):
@@ -55,6 +56,7 @@ async def run_single_experiment(
     benchmark: str,
     n_iterations: int,
     seed: int = 42,
+    beta: float = 0.5,
 ) -> dict[str, RegretData]:
     """Run one seed of the experiment with all four algorithms."""
     benchmark_obj = HPOBenchmark(benchmark_name=benchmark, seed=seed)
@@ -64,6 +66,7 @@ async def run_single_experiment(
         search_space=benchmark_obj.param_specs,
         seed=seed,
         multivariate=True,
+        beta=beta,
     )
     stosoo_opt = TimedOptimizer(stosoo, n_iterations, dim)
     hoo_t_opt = TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0)
@@ -118,6 +121,7 @@ async def run_multiple_experiments(
     n_iterations: int,
     n_runs: int = 20,
     base_seed: int = 42,
+    beta: float = 0.5,
 ) -> list[dict[str, RegretData]]:
     """Run multiple independent runs of the experiment."""
     results = []
@@ -125,13 +129,15 @@ async def run_multiple_experiments(
         range(n_runs), desc=f"  {benchmark} {n_iterations} runs", leave=False
     ):
         results.append(
-            await run_single_experiment(benchmark, n_iterations, seed=base_seed + i)
+            await run_single_experiment(
+                benchmark, n_iterations, seed=base_seed + i, beta=beta
+            )
         )
     return results
 
 
 def save_results_to_csv(
-    results_dict: dict, benchmark: str, exp_type: str = "hpo"
+    results_dict: dict, benchmark: str, exp_type: str = "hpo", beta: float = BETA
 ) -> None:
     summary_rows = []
     for key, stats in results_dict.items():
@@ -152,7 +158,7 @@ def save_results_to_csv(
                     "total_regret_std": float(data["regrets"]["sum_regrets"].std()),
                 }
             )
-    path = RESULT_DIR / f"{benchmark}_{exp_type}_summary.csv"
+    path = RESULT_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     with open(path, "w", newline="") as f:
         if summary_rows:
             writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
@@ -162,7 +168,7 @@ def save_results_to_csv(
 
 
 def save_iterations_to_csv(
-    results_dict: dict, benchmark: str, exp_type: str = "hpo"
+    results_dict: dict, benchmark: str, exp_type: str = "hpo", beta: float = BETA
 ) -> None:
     rows = []
     for key, stats in results_dict.items():
@@ -185,7 +191,7 @@ def save_iterations_to_csv(
                         "regret_std": std,
                     }
                 )
-    path = RESULT_DIR / f"{benchmark}_{exp_type}_iterations.csv"
+    path = RESULT_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
     with open(path, "w", newline="") as f:
         if rows:
             writer = csv.DictWriter(f, fieldnames=rows[0].keys())
@@ -231,13 +237,16 @@ async def main():
                     n_iterations=n_iter,
                     n_runs=n_runs,
                     base_seed=base_seed,
+                    beta=BETA,
                 )
                 if all_results:
                     results_dict[keys[i]] = calculate_statistics(all_results)
 
             if results_dict:
-                save_results_to_csv(results_dict, benchmark, exp_type="hpo")
-                save_iterations_to_csv(results_dict, benchmark, exp_type="hpo")
+                save_results_to_csv(results_dict, benchmark, exp_type="hpo", beta=BETA)
+                save_iterations_to_csv(
+                    results_dict, benchmark, exp_type="hpo", beta=BETA
+                )
     finally:
         await stop_hpo_server()
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import numpy as np
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
@@ -24,6 +25,8 @@ from imabo import IMABO
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
 
+BETA = 0.5
+
 
 class Algorithm(Enum):
     IMABO = "IMABO"
@@ -37,13 +40,20 @@ class RegretData(TypedDict):
     simple_regrets: float
 
 
+def _rescale_to_search_space(z: np.ndarray, search_space: dict) -> np.ndarray:
+    """Map a point in [0,1]^dim (as produced by the tree baselines) onto the
+    actual per-dimension [lower, upper] bounds declared in ``search_space``."""
+    bounds = np.array([[v["lower"], v["upper"]] for v in search_space.values()])
+    lower, upper = bounds[:, 0], bounds[:, 1]
+    return lower + (upper - lower) * np.asarray(z)
+
+
 def run_optimization(
     function_name: str,
     dim: int,
+    beta: float = 0.5,
     n_iterations: int = 1000,
     seed: int = 42,
-    bounds: tuple[float, float] | None = None,
-    sigma: float | None = None,
 ) -> dict[str, RegretData]:
     obj_func = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj_func.get_function_by_name(function_name)
@@ -57,7 +67,8 @@ def run_optimization(
     imabo_opt = IMABO(
         search_space=search_space,
         seed=seed,
-        multivariate=True,
+        multivariate=False,
+        beta=beta,
     )
     stosoo_opt = TimedOptimizer(stosoo, n_iterations, dim)
     hoo_t_opt = TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0)
@@ -81,16 +92,20 @@ def run_optimization(
         for _ in tqdm(range(n_iterations), desc=f"Running {opt_name}", leave=False):
             if is_xarm and opt.done:
                 continue
-            x = opt.suggest()
-            y = func(x)
+            z = opt.suggest()
+            x = _rescale_to_search_space(z, search_space) if is_xarm else z
+            y = func(x) / dim
             regret = fmax - func_noiseless(x) / dim
             if is_xarm:
-                opt.observe(x, y)
+                opt.observe(z, y)
             else:
                 opt.observe(y)
             regrets[opt_name]["regrets"].append(regret)
 
-        best_x = opt.suggest_best() if is_xarm else opt.best_x
+        if is_xarm:
+            best_x = _rescale_to_search_space(opt.suggest_best(), search_space)
+        else:
+            best_x = opt.best_x
         regrets[opt_name]["simple_regrets"] = fmax - func_noiseless(best_x) / dim
 
     return regrets
@@ -102,16 +117,19 @@ def run_multiple_experiments(
     n_iterations: int = 1000,
     n_runs: int = 10,
     base_seed: int = 42,
+    n_jobs: int = 8,
+    beta: float = 0.5,
 ) -> list[dict[str, RegretData]]:
-    return [
-        run_optimization(
+    return Parallel(n_jobs=n_jobs, backend="loky", verbose=5)(
+        delayed(run_optimization)(
             function_name,
             dim,
+            beta,
             n_iterations,
             base_seed + i * 1000,
         )
         for i in range(n_runs)
-    ]
+    )
 
 
 if __name__ == "__main__":
@@ -119,7 +137,6 @@ if __name__ == "__main__":
     dim = 4
     n_runs = 20
     base_seed = 42
-
     for fn in function_name:
         print(f"Running {fn}...")
         test_cases = [
@@ -136,7 +153,7 @@ if __name__ == "__main__":
 
         for i, (fn, d, n_iter) in enumerate(tqdm(test_cases, desc="Test cases")):
             all_results = run_multiple_experiments(
-                fn, d, n_iter, n_runs=n_runs, base_seed=base_seed
+                fn, d, n_iter, n_runs=n_runs, base_seed=base_seed, beta=BETA
             )
             results_dict[keys[i]] = calculate_statistics(all_results)
         save_results_to_csv(results_dict, fn, exp_type="toy", result_dir=RESULT_DIR)

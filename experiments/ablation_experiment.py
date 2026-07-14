@@ -16,12 +16,16 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.optuna_bandit import OptunaBandit
-from experiments.utils.normalized import reward_bounds
-from experiments.utils.stats import calculate_statistics, save_results_to_csv
+from experiments.utils.stats import (
+    calculate_statistics,
+    save_iterations_to_csv,
+    save_results_to_csv,
+)
 from imabo import IMABO
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
@@ -30,16 +34,16 @@ RESULT_DIR.mkdir(exist_ok=True)
 # ── Sub-experiment 1: TPE oracle impact ───────────────────────────────────────
 TPE_DIMS = [1, 3, 5, 7, 10]
 TPE_FUNCTIONS = ["sin1", "garland", "rastrigin"]
-TPE_N_ITER = 3000
+TPE_N_ITER = 5000
 TPE_N_RUNS = 10
 
 # ── Sub-experiment 2: MOSS / k impact ─────────────────────────────────────────
-K_VALUES = [1, 10, 50, 100, 200]
+K_VALUES = [50, 70, 100, 200]
 K_DIM = 4
 K_FUNCTIONS = ["sin1", "garland", "rastrigin"]
-K_N_ITER = 3000
+K_N_ITER = 5000
 K_N_RUNS = 10
-
+BETA = 0.5
 
 # ── Runners ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +55,7 @@ def run_single(
     seed: int,
     optimizer_type: Literal["random_suggest", "imabo", "tpe"],
     k: int = 1,
+    beta: float = BETA,
 ) -> dict:
     obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
     func = obj.get_function_by_name(function_name)  # built-in noise
@@ -64,6 +69,7 @@ def run_single(
             seed=seed,
             multivariate=False,
             use_tpe=False,
+            beta=beta,
         )
         suggest_fn = opt.suggest
         observe_fn = opt.observe
@@ -73,6 +79,7 @@ def run_single(
             search_space=search_space,
             seed=seed,
             multivariate=False,
+            beta=beta,
         )
         suggest_fn = opt.suggest
         observe_fn = opt.observe
@@ -88,7 +95,7 @@ def run_single(
         range(n_iterations), desc=f"  {function_name} {dim}D runs", leave=False
     ):
         x = suggest_fn()
-        y = func(x)
+        y = func(x) / dim
         regrets.append(fmax - func_noiseless(x) / dim)
         observe_fn(y)
 
@@ -107,24 +114,21 @@ def run_experiment(
     n_runs: int,
     base_seed: int = 42,
     k: int = 1,
+    beta: float = BETA,
+    n_jobs: int = 8,
 ) -> list[dict]:
-    all_results = []
-    for i in tqdm(range(n_runs), desc=f"  {function_name} {dim}D runs", leave=False):
+    def _one_run(i: int) -> dict:
         seed = base_seed + i * 1000
-        all_results.append(
-            {
-                opt_name: run_single(
-                    function_name,
-                    dim,
-                    n_iterations,
-                    seed,
-                    opt_name,
-                    k,
-                )
-                for opt_name in optimizers
-            }
-        )
-    return all_results
+        return {
+            opt_name: run_single(
+                function_name, dim, n_iterations, seed, opt_name, k, beta
+            )
+            for opt_name in optimizers
+        }
+
+    return Parallel(n_jobs=n_jobs, backend="loky", verbose=5)(
+        delayed(_one_run)(i) for i in range(n_runs)
+    )
 
 
 # ── Sub-experiment 1 ──────────────────────────────────────────────────────────
@@ -133,25 +137,34 @@ def run_experiment(
 def run_tpe_ablation(
     n_runs: int = TPE_N_RUNS,
     base_seed: int = 42,
-):
-    """IMABO vs Random across dimensions, one plot per function."""
-    algorithms = ["Random", "IMABO"]
+    beta: float = BETA,
+) -> dict:
+    """I-MOSS-TPE vs I-MOSS across dimensions, one plot per function."""
+    algorithms = ["I-MOSS", "I-MOSS-TPE"]
     opt_types = ["random_suggest", "imabo"]
+    exp_type = f"tpe_ablation_beta_{beta}"
 
+    all_results_dict: dict = {}
     for fn in TPE_FUNCTIONS:
-        print(f"\n[TPE ablation] {fn}")
+        print(f"\n[TPE ablation] {fn} (beta={beta})")
         results_dict: dict = {}
 
         for dim in TPE_DIMS:
             key = f"{fn}_{dim}D_{TPE_N_ITER}"
-            raw = run_experiment(fn, dim, opt_types, TPE_N_ITER, n_runs, base_seed)
+            raw = run_experiment(
+                fn, dim, opt_types, TPE_N_ITER, n_runs, base_seed, beta=beta
+            )
             # rename keys to display names
             renamed = [{algorithms[j]: r[opt_types[j]] for j in range(2)} for r in raw]
             results_dict[key] = calculate_statistics(renamed)
 
-        save_results_to_csv(
-            results_dict, fn, exp_type="tpe_ablation", result_dir=RESULT_DIR
+        save_results_to_csv(results_dict, fn, exp_type=exp_type, result_dir=RESULT_DIR)
+        save_iterations_to_csv(
+            results_dict, fn, exp_type=exp_type, result_dir=RESULT_DIR
         )
+        all_results_dict[fn] = results_dict
+
+    return all_results_dict
 
 
 # ── Sub-experiment 2 ──────────────────────────────────────────────────────────
@@ -160,13 +173,15 @@ def run_tpe_ablation(
 def run_k_ablation(
     n_runs: int = K_N_RUNS,
     base_seed: int = 42,
-):
-    """IMABO vs TPE with varying k, one plot per function."""
+    beta: float = BETA,
+) -> dict:
+    """I-MOSS-TPE vs TPE with varying k, one plot per function."""
+    all_results: dict = {}
     for fn in K_FUNCTIONS:
-        print(f"\n[k ablation] {fn}")
+        print(f"\n[k ablation] {fn} (beta={beta})")
         results: dict = {}
 
-        # IMABO (run once, shared across k comparisons)
+        # I-MOSS-TPE (run once, shared across k comparisons)
         raw_imabo = run_experiment(
             fn,
             K_DIM,
@@ -174,9 +189,12 @@ def run_k_ablation(
             K_N_ITER,
             n_runs,
             base_seed,
+            beta=beta,
         )
-        imabo_stats = calculate_statistics([{"IMABO": r["imabo"]} for r in raw_imabo])
-        results["IMABO"] = imabo_stats["IMABO"]
+        imabo_stats = calculate_statistics(
+            [{"I-MOSS-TPE": r["imabo"]} for r in raw_imabo]
+        )
+        results["I-MOSS-TPE"] = imabo_stats["I-MOSS-TPE"]
 
         for k in tqdm(K_VALUES, desc=f"{fn} k-values", leave=True):
             raw_k = run_experiment(
@@ -187,20 +205,24 @@ def run_k_ablation(
                 n_runs,
                 base_seed + k,
                 k=k,
+                beta=beta,
             )
             k_stats = calculate_statistics([{"tpe": r["tpe"]} for r in raw_k])
             results[f"TPE k={k}"] = k_stats["tpe"]
 
-        _save_k_results(results, fn)
+        _save_k_results(results, fn, beta=beta)
+        all_results[fn] = results
+
+    return all_results
 
 
-def _save_k_results(results: dict, function_name: str) -> None:
+def _save_k_results(results: dict, function_name: str, beta: float = BETA) -> None:
     # Summary (one row per algorithm)
     summary_rows = []
     iter_rows = []
 
     for alg, data in results.items():
-        k_val = None if alg == "IMABO" else int(alg.split("k=")[1])
+        k_val = None if alg == "I-MOSS-TPE" else int(alg.split("k=")[1])
         summary_rows.append(
             {
                 "function": function_name,
@@ -228,33 +250,16 @@ def _save_k_results(results: dict, function_name: str) -> None:
                 }
             )
 
-    summary_path = RESULT_DIR / f"k_ablation_{function_name}_summary.csv"
+    summary_path = RESULT_DIR / f"k_ablation_{function_name}_beta_{beta}_summary.csv"
     with open(summary_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
         writer.writeheader()
         writer.writerows(summary_rows)
     print(f"  Saved {summary_path}")
 
-    # Save iterations CSV
-    iter_rows = []
-    for alg, data in results.items():
-        k_value = None if alg == "IMABO" else int(alg.split("k=")[1])
-        regrets_mean = data["regrets"]["mean"]
-        regrets_std = data["regrets"]["std"]
-        for i, (mean, std) in enumerate(zip(regrets_mean, regrets_std)):
-            iter_rows.append(
-                {
-                    "function": function_name,
-                    "dimension": K_DIM,
-                    "n_iterations": K_N_ITER,
-                    "algorithm": alg,
-                    "k": k_value,
-                    "regret_mean": mean,
-                    "regret_std": std,
-                    "iteration": i + 1,
-                }
-            )
-    iter_path = RESULT_DIR / f"k_ablation_{function_name}_{K_N_ITER}_iterations.csv"
+    iter_path = (
+        RESULT_DIR / f"k_ablation_{function_name}_{K_N_ITER}_beta_{beta}_iterations.csv"
+    )
     with open(iter_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=iter_rows[0].keys())
         writer.writeheader()

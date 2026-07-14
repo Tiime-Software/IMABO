@@ -15,12 +15,14 @@ Usage (from repo root):
     python -m experiments.rf_tabular_bandit_experiment
 """
 
+import copy
 import json
 from collections import Counter
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from experiments.baselines.random_search import RandomSearch
@@ -39,6 +41,7 @@ RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite"
 RESULT_DIR.mkdir(exist_ok=True)
 
 BETA = 0.5
+N_JOBS = 8
 
 
 class Algorithm(Enum):
@@ -165,39 +168,68 @@ def run_multiple_experiments(
     base_seed: int = 42,
     tabfm_model: Any = None,
     noise: bool = True,
+    n_jobs: int = N_JOBS,
 ) -> list[dict]:
     """Run multiple independent runs of a single algorithm.
 
     Each run is checkpointed to its own JSON file -- a run that's already on
     disk is loaded instead of re-executed, so re-running this (e.g. after
-    adding more runs or budgets) never re-does completed work.
+    adding more runs or budgets) never re-does completed work. Runs still
+    missing a checkpoint are executed concurrently via joblib (threading
+    backend -- each run's compute is numpy/sklearn-heavy and releases the
+    GIL). Each thread gets its own shallow copy of `bench` re-seeded via
+    `reset_noise`, since `bench.rng` is mutable and shared across threads
+    otherwise -- both a data race and a reproducibility bug (concurrent
+    runs would consume from the same noise stream instead of their own
+    per-seed one).
     """
     stem = f"{benchmark_tag(bench.bm_id, noise)}_{algo_slug(algorithm)}_{n_iterations}iters"
-    all_results = []
-    for i in tqdm(range(n_runs), desc=f"  T={n_iterations} runs", leave=True):
-        seed = base_seed + i
+
+    all_results: list[dict | None] = [None] * n_runs
+    pending = []
+    for i in range(n_runs):
         run_path = RESULT_DIR / f"{stem}_run{i}.json"
         if run_path.exists():
             with open(run_path) as f:
-                all_results.append(json.load(f))
+                all_results[i] = json.load(f)
             tqdm.write(f"--- {stem}_run{i} already complete, skipping ---")
-            continue
+        else:
+            pending.append(i)
+
+    def _one_run(i: int) -> dict:
+        seed = base_seed + i
+        local_bench = copy.copy(bench)
+        local_bench.reset_noise(seed)
         result = run_single_experiment(
-            bench,
+            local_bench,
             n_iterations,
             algorithm,
             seed=seed,
             tabfm_model=tabfm_model,
             noise=noise,
         )
-        all_results.append(result)
-        with open(run_path, "w") as f:
+        with open(RESULT_DIR / f"{stem}_run{i}.json", "w") as f:
             json.dump(result, f)
+        return result
+
+    if pending:
+        results = Parallel(n_jobs=n_jobs, backend="threading", verbose=5)(
+            delayed(_one_run)(i) for i in pending
+        )
+        for i, result in zip(pending, results):
+            all_results[i] = result
+
     return all_results
 
 
 def run_experiment(
-    bench, n_runs, base_seed, n_iter, algorithm: Algorithm, noise: bool = True
+    bench,
+    n_runs,
+    base_seed,
+    n_iter,
+    algorithm: Algorithm,
+    noise: bool = True,
+    n_jobs: int = N_JOBS,
 ):
     dim = len(bench.get_search_space())
     tag = benchmark_tag(bench.bm_id, noise)
@@ -217,6 +249,7 @@ def run_experiment(
         base_seed=base_seed,
         tabfm_model=tabfm_model,
         noise=noise,
+        n_jobs=n_jobs,
     )
     key = f"{tag}_{dim}D_{n_iter}"
     results_dict[key] = calculate_statistics(

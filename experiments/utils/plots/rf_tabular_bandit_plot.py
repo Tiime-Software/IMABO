@@ -1152,7 +1152,9 @@ def plot_combined_regrets(
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        out_path = RESULTS_DIR / "paper_plots" / f"{benchmark}_combined_regrets_{exp_type}.pdf"
+        out_path = (
+            RESULTS_DIR / "paper_plots" / f"{benchmark}_combined_regrets_{exp_type}.pdf"
+        )
         save_figure(out_path, bbox_inches="tight")
 
     plt.show()
@@ -1225,7 +1227,9 @@ def plot_cumulative_regret_grid(
 
     if save_fig:
         tag = "_".join(benchmarks)
-        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_cumulative_regret_grid_{exp_type}.pdf"
+        out_path = (
+            RESULTS_DIR / "paper_plots" / f"{tag}_cumulative_regret_grid_{exp_type}.pdf"
+        )
         save_figure(out_path, bbox_inches="tight")
 
     plt.show()

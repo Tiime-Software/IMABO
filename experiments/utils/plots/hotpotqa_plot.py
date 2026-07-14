@@ -296,7 +296,11 @@ def plot_config_analysis(
         )
 
     if save_fig:
-        path = RESULTS_DIR / "paper_plots" / f"hotpotqa_config_analysis_{n_samples}samples.pdf"
+        path = (
+            RESULTS_DIR
+            / "paper_plots"
+            / f"hotpotqa_config_analysis_{n_samples}samples.pdf"
+        )
         save_figure(path, bbox_inches="tight", parents=True)
 
     plt.show()

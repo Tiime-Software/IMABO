@@ -45,6 +45,16 @@ async def _api_call_objective_function(
     result = await api_call(
         "objective_function", {"config": config, "fidelity": fidelity, "rng": rng}
     )
+    if result is None:
+        # Raise rather than return None: this is joblib.Memory-cached, and a
+        # cached None from a transient failure (server hiccup, timeout) would
+        # permanently poison this (config, fidelity, rng) cache key -- every
+        # future run re-derives the same deterministic configs and would keep
+        # getting None back without ever retrying the API call.
+        raise RuntimeError(
+            f"objective_function API call failed for config={config}, "
+            f"fidelity={fidelity}, rng={rng}"
+        )
     return result
 
 
