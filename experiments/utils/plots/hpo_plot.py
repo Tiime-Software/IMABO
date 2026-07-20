@@ -9,6 +9,7 @@ from pathlib import Path
 
 from experiments.hpo_experiment import BETA
 from experiments.utils.plots.plot_configs import (
+    adaptive_label_fontsize,
     confidence_ellipse,
     create_figure_legend,
     display_name,
@@ -183,8 +184,12 @@ def plot_performance_trajectories(
             )
 
     # Labels and title
-    ax.set_xlabel("Simple Regret (Best Point Found)", fontsize=22)
-    ax.set_ylabel("Cumulative Regret (Total Regret)", fontsize=22)
+    ax.set_xlabel(
+        "Simple Regret (Best Point Found)", fontsize=adaptive_label_fontsize(ax)
+    )
+    ax.set_ylabel(
+        "Cumulative Regret (Total Regret)", fontsize=adaptive_label_fontsize(ax)
+    )
 
     # Calculate final ranking
     final_scores = []
@@ -301,8 +306,10 @@ def plot_cumulative_regret_over_iterations(
             markersize=8,
         )
 
-    ax.set_xlabel("Iteration", fontweight="bold", fontsize=14)
-    ax.set_ylabel("Cumulative Regret", fontweight="bold", fontsize=14)
+    ax.set_xlabel("Iteration", fontweight="bold", fontsize=adaptive_label_fontsize(ax))
+    ax.set_ylabel(
+        "Cumulative Regret", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+    )
     ax.set_title(
         f"Cumulative Regret over {n_iterations} Iterations - {benchmark.upper()}",
         fontweight="bold",
@@ -390,8 +397,12 @@ def plot_simple_regret_vs_iterations(
             capthick=2,
         )
 
-    ax.set_xlabel("Number of Iterations", fontweight="bold", fontsize=14)
-    ax.set_ylabel("Simple Regret", fontweight="bold", fontsize=14)
+    ax.set_xlabel(
+        "Number of Iterations", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+    )
+    ax.set_ylabel(
+        "Simple Regret", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+    )
     ax.set_title(
         f"Simple Regret vs Iteration Budget - {benchmark.upper()}",
         fontweight="bold",
@@ -492,8 +503,12 @@ def plot_combined_regrets(
             markersize=8,
         )
 
-    ax1.set_xlabel("Iteration", fontweight="bold", fontsize=22)
-    ax1.set_ylabel("Cumulative Regret", fontweight="bold", fontsize=22)
+    ax1.set_xlabel(
+        "Iteration", fontweight="bold", fontsize=adaptive_label_fontsize(ax1)
+    )
+    ax1.set_ylabel(
+        "Cumulative Regret", fontweight="bold", fontsize=adaptive_label_fontsize(ax1)
+    )
     ax1.tick_params(axis="both", which="major", labelsize=20)
     ax1.set_axisbelow(True)
     ax1.grid(True, alpha=0.3)
@@ -527,8 +542,12 @@ def plot_combined_regrets(
             capthick=2,
         )
 
-    ax2.set_xlabel("Evaluation Budget", fontweight="bold", fontsize=22)
-    ax2.set_ylabel("Simple Regret", fontweight="bold", fontsize=22)
+    ax2.set_xlabel(
+        "Evaluation Budget", fontweight="bold", fontsize=adaptive_label_fontsize(ax2)
+    )
+    ax2.set_ylabel(
+        "Simple Regret", fontweight="bold", fontsize=adaptive_label_fontsize(ax2)
+    )
     ax2.set_xticks(n_iters)
     ax2.tick_params(axis="both", which="major", labelsize=20)
     ax2.set_axisbelow(True)
@@ -553,12 +572,156 @@ def plot_combined_regrets(
     plt.show()
 
 
+def plot_combined_regrets_grid(
+    benchmarks=("lr", "svm"),
+    n_iterations=10000,
+    save_fig=False,
+    exp_type="hpo",
+    beta=BETA,
+):
+    """
+    Plot cumulative regret and simple regret for multiple benchmarks in a single
+    wide, short grid (len(benchmarks) rows x 2 cols: Cumulative | Simple Regret)
+    with one common legend. Replaces the previous per-benchmark 1x2 figures
+    (plot_combined_regrets) so that e.g. LR and SVM results fit in one compact
+    figure instead of two.
+
+    Args:
+        benchmarks: Iterable of benchmark names (e.g. ('lr', 'svm'))
+        n_iterations: Number of iterations for the cumulative-regret column
+        save_fig: Whether to save the figure
+        exp_type: Experiment type for filename
+        beta: Beta value used for the run, for filename
+    """
+    n_bench = len(benchmarks)
+    fig, axes = plt.subplots(n_bench, 2, figsize=(14, 3.0 * n_bench))
+    if n_bench == 1:
+        axes = axes.reshape(1, 2)
+
+    base_markers = ["o", "^", "s", "D", "v", "p"]
+    legend_handles, legend_labels = None, None
+
+    for row, benchmark in enumerate(benchmarks):
+        iterations_csv = (
+            RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
+        )
+        summary_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
+
+        df_iterations = pd.read_csv(iterations_csv)
+        df_summary = pd.read_csv(summary_csv)
+        df_iterations = df_iterations[df_iterations["n_iterations"] == n_iterations]
+
+        if df_iterations.empty:
+            print(f"No data found for {benchmark} at {n_iterations} iterations")
+            continue
+
+        algorithms = df_iterations["algorithm"].unique()
+        ax_left = axes[row, 0]
+        ax_right = axes[row, 1]
+
+        # --- LEFT COL: Cumulative Regret over Iterations ---
+        for i, algo in enumerate(algorithms):
+            algo_data = df_iterations[df_iterations["algorithm"] == algo]
+            iterations = algo_data["iteration"].values
+            mean_regrets = algo_data["regret_mean"].values
+            cumulative_mean = np.cumsum(mean_regrets)
+
+            color = get_algorithm_color(i)
+            marker = base_markers[i % len(base_markers)]
+
+            ax_left.plot(
+                iterations,
+                cumulative_mean,
+                color=color,
+                label=display_name(algo),
+                marker=marker,
+                markevery=len(iterations) // 8,
+                linewidth=1.8,
+                markersize=6,
+            )
+
+        ax_left.set_ylabel(
+            f"{benchmark.upper()}\nCumulative Regret",
+            fontweight="bold",
+            fontsize=20,
+        )
+        if row == n_bench - 1:
+            ax_left.set_xlabel("Iteration", fontweight="bold", fontsize=20)
+        ax_left.tick_params(axis="both", which="major", labelsize=15)
+        ax_left.set_axisbelow(True)
+        ax_left.grid(True, alpha=0.3)
+        ax_left.spines["top"].set_visible(False)
+        ax_left.spines["right"].set_visible(False)
+
+        # --- RIGHT COL: Simple Regret vs Evaluation Budget ---
+        for i, algo in enumerate(algorithms):
+            algo_data = df_summary[df_summary["algorithm"] == algo].sort_values(
+                "n_iterations"
+            )
+            n_iters = algo_data["n_iterations"].values
+            simple_regret_mean = algo_data["simple_regret_mean"].values
+            simple_regret_std = algo_data["simple_regret_std"].values
+
+            color = get_algorithm_color(i)
+            marker = base_markers[i % len(base_markers)]
+
+            ax_right.errorbar(
+                n_iters,
+                simple_regret_mean,
+                yerr=simple_regret_std,
+                color=color,
+                label=display_name(algo),
+                marker=marker,
+                markersize=6,
+                linewidth=1.8,
+                capsize=4,
+                capthick=1.5,
+            )
+
+        ax_right.set_ylabel(
+            "Simple Regret",
+            fontweight="bold",
+            fontsize=20,
+        )
+        if row == n_bench - 1:
+            ax_right.set_xlabel(
+                "Evaluation Budget",
+                fontweight="bold",
+                fontsize=20,
+            )
+        ax_right.set_xticks(n_iters)
+        ax_right.tick_params(axis="both", which="major", labelsize=15)
+        ax_right.set_axisbelow(True)
+        ax_right.grid(True, alpha=0.3)
+        ax_right.spines["top"].set_visible(False)
+        ax_right.spines["right"].set_visible(False)
+
+        if legend_handles is None:
+            legend_handles, legend_labels = ax_left.get_legend_handles_labels()
+
+    # bbox_y/rect tightened vs. the shared defaults: this figure is short
+    # (3in per row) and wide, so create_figure_legend's default bbox_y=1.08
+    # leaves a disproportionately large absolute gap above the top row.
+    create_figure_legend(
+        fig, legend_handles, legend_labels, ncol=len(legend_labels), bbox_y=1.02
+    )
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97], h_pad=1.2, w_pad=4.0)
+
+    if save_fig:
+        bench_tag = "_".join(benchmarks)
+        out_path = (
+            RESULTS_DIR
+            / "paper_plots"
+            / f"{bench_tag}_combined_regrets_grid_{exp_type}_beta_{beta}.pdf"
+        )
+        save_figure(out_path, bbox_inches="tight")
+
+    plt.show()
+
+
 if __name__ == "__main__":
-    for benchmark in ["lr", "svm"]:
-        print(f"Generating combined regrets plot for {benchmark.upper()}...")
-        plot_combined_regrets(
-            benchmark=benchmark, n_iterations=10000, save_fig=True, exp_type="hpo"
-        )
-        plot_performance_trajectories(
-            benchmark=benchmark, save_fig=True, exp_type="hpo"
-        )
+    print("Generating combined regrets grid plot for LR and SVM...")
+    plot_combined_regrets_grid(
+        benchmarks=("lr", "svm"), n_iterations=10000, save_fig=True, exp_type="hpo"
+    )

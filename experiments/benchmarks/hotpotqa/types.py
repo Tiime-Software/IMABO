@@ -25,10 +25,3 @@ class Result:
     gold: str
     pred: str
     reward: Reward
-
-
-@dataclass
-class BatchResult:
-    results: list[Result]
-    rewards: list[float]
-    avg_reward: float

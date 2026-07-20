@@ -12,14 +12,20 @@ from experiments.utils.plots.plot_configs import (
     get_algorithm_color,
     create_figure_legend,
     save_figure,
+    adaptive_label_fontsize,
 )
+from experiments.hotpotqa_experiment import BETA
 
 RESULTS_DIR = Path(__file__).parents[3] / "results" / "hotpotqa"
 
 ALGO_DISPLAY_NAMES = {
-    "IMABO": "I-MOSS-TPE",
-    "IMABO-noTPE": "I-MOSS",
+    "IMABO": "IMOSS-TPE",
+    "IMABO-noTPE": "IMOSS",
+    "IMOSS-TABFM": "IMOSS-TABFM",
+    "UCB-AIR": "UCB-AIR",
 }
+
+_IMABO_FAMILY = ["IMABO", "IMABO-noTPE"]
 
 
 def display_label(algo: str) -> str:
@@ -34,6 +40,9 @@ def plot_hotpotqa_results(
     n_samples: int,
     n_runs: int,
     save_fig: bool = False,
+    fig_name: str | None = None,
+    display_overrides: dict[str, str] | None = None,
+    dirs: dict[str, Path] | None = None,
 ) -> None:
     """
     Side-by-side plot: cumulative regret over iterations (left) and
@@ -44,8 +53,18 @@ def plot_hotpotqa_results(
         n_samples: Number of optimization steps used in the experiment
         n_runs: Number of runs used in the experiment
         save_fig: Whether to save the figure as PDF
+        fig_name: Filename to save under (default: hotpotqa_results_{n_samples}samples.pdf)
+        display_overrides: Per-call legend label overrides, merged over
+            ALGO_DISPLAY_NAMES (e.g. to label beta-sweep variants distinctly
+            without touching the shared display-name map).
+        dirs: Per-algorithm results directory override (default RESULTS_DIR),
+            for when a series' CSVs live in a different subfolder.
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    names = {**ALGO_DISPLAY_NAMES, **(display_overrides or {})}
+    label_of = lambda algo: names.get(algo, algo)
+    dir_of = lambda algo: (dirs or {}).get(algo, RESULTS_DIR)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 3))
     base_markers = ["o", "^", "s", "D", "v", "P", "X", "*"]
     rng = np.random.default_rng(0)
 
@@ -54,8 +73,8 @@ def plot_hotpotqa_results(
 
     for i, algo in enumerate(algorithms):
         stem = f"{algo}_hotpotqa_{n_samples}samples_{n_runs}runs"
-        iter_csv = RESULTS_DIR / f"{stem}_iterations.csv"
-        summary_csv = RESULTS_DIR / f"{stem}_summary.csv"
+        iter_csv = dir_of(algo) / f"{stem}_iterations.csv"
+        summary_csv = dir_of(algo) / f"{stem}_summary.csv"
 
         df_iter = pd.read_csv(iter_csv)
         df_summary = pd.read_csv(summary_csv)
@@ -66,7 +85,6 @@ def plot_hotpotqa_results(
         std_regrets = df_iter["regret_std"].values
 
         cumulative_mean = np.cumsum(mean_regrets) / np.arange(1, len(mean_regrets) + 1)
-        # cumulative_mean = np.cumsum(mean_regrets)
         cumulative_std = np.sqrt(np.cumsum(std_regrets**2)) / iterations
 
         color = get_algorithm_color(i)
@@ -74,7 +92,7 @@ def plot_hotpotqa_results(
             iterations,
             cumulative_mean,
             color=color,
-            label=display_label(algo),
+            label=label_of(algo),
             marker=base_markers[i % len(base_markers)],
             markevery=max(1, len(iterations) // 8),
             linewidth=2.0,
@@ -115,19 +133,19 @@ def plot_hotpotqa_results(
         )
         simple_regret_ymax = max(simple_regret_ymax, mean + std, raw.max())
 
-    ax1.set_xlabel("Iteration", fontsize=14)
-    ax1.set_ylabel("Normalized Cumulative Regret", fontsize=14)
-    ax1.tick_params(axis="both", which="major", labelsize=12)
+    ax1.set_xlabel("Iteration", fontsize=20)
+    ax1.set_ylabel("Normalized Cumulative Regret", fontsize=15)
+    ax1.tick_params(axis="both", which="major", labelsize=15)
     ax1.set_axisbelow(True)
     ax1.grid(True, alpha=0.3)
     ax1.spines["top"].set_visible(False)
     ax1.spines["right"].set_visible(False)
 
     ax2.set_xticks(x_pos)
-    ax2.set_xticklabels([display_label(algo) for algo in algorithms], fontsize=13)
-    ax2.set_ylabel("Simple Regret", fontsize=14)
+    ax2.set_xticklabels([label_of(algo) for algo in algorithms], fontsize=13)
+    ax2.set_ylabel("Simple Regret", fontsize=15)
     ax2.set_ylim(0.5, simple_regret_ymax + 0.02)
-    ax2.tick_params(axis="both", which="major", labelsize=12)
+    ax2.tick_params(axis="both", which="major", labelsize=15)
     ax2.set_axisbelow(True)
     ax2.grid(True, alpha=0.3, axis="y")
     ax2.spines["top"].set_visible(False)
@@ -139,7 +157,8 @@ def plot_hotpotqa_results(
     plt.tight_layout(rect=[0, 0, 1, 0.95])
 
     if save_fig:
-        path = RESULTS_DIR / "paper_plots" / f"hotpotqa_results_{n_samples}samples.pdf"
+        name = fig_name or f"hotpotqa_results_{n_samples}samples.pdf"
+        path = RESULTS_DIR / "paper_plots" / name
         save_figure(path, bbox_inches="tight", parents=True)
 
     plt.show()
@@ -154,6 +173,7 @@ def plot_config_analysis(
     n_samples: int,
     n_runs: int,
     save_fig: bool = False,
+    dirs: dict[str, Path] | None = None,
 ) -> None:
     """
     Per-run config analysis.
@@ -161,12 +181,18 @@ def plot_config_analysis(
     Layout: (n_algo * n_runs) data rows + 1 table row.
     Each data row = one run: [reward_dist, model, prompt_template, top_k, temperature].
     Final row: best-config-per-run table, one panel per algorithm.
+
+    Args:
+        dirs: Per-algorithm results directory override (default RESULTS_DIR),
+            for when a series' JSON lives in a different subfolder.
     """
+    dir_of = lambda algo: (dirs or {}).get(algo, RESULTS_DIR)
+
     # Load and preprocess
     algo_data: dict[str, list[dict]] = {}
     for algo in algorithms:
         path = (
-            RESULTS_DIR / f"{algo}_hotpotqa_multi_{n_samples}samples_{n_runs}runs.json"
+            dir_of(algo) / f"{algo}_hotpotqa_multi_{n_samples}samples_{n_runs}runs.json"
         )
         with open(path) as f:
             all_results = json.load(f)
@@ -218,8 +244,8 @@ def plot_config_analysis(
                 edgecolor="white",
                 linewidth=0.5,
             )
-            ax.set_xlabel("Reward", fontsize=10)
-            ax.set_ylabel("Count", fontsize=10)
+            ax.set_xlabel("Reward", fontsize=adaptive_label_fontsize(ax))
+            ax.set_ylabel("Count", fontsize=adaptive_label_fontsize(ax))
             ax.set_title(f"{run_label} — reward", fontsize=11, fontweight="bold")
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
@@ -237,7 +263,7 @@ def plot_config_analysis(
                         edgecolor="white",
                         linewidth=0.5,
                     )
-                    ax.set_xlabel("temperature", fontsize=10)
+                    ax.set_xlabel("temperature", fontsize=adaptive_label_fontsize(ax))
                 else:
                     cats = sorted(df[hp].unique())
                     vc = df[hp].value_counts()
@@ -251,8 +277,8 @@ def plot_config_analysis(
                     )
                     ax.set_xticks(np.arange(len(cats)))
                     ax.set_xticklabels(cats, rotation=30, ha="right", fontsize=9)
-                    ax.set_xlabel(hp, fontsize=10)
-                ax.set_ylabel("Count", fontsize=10)
+                    ax.set_xlabel(hp, fontsize=adaptive_label_fontsize(ax))
+                ax.set_ylabel("Count", fontsize=adaptive_label_fontsize(ax))
                 ax.set_title(f"{run_label} — {hp}", fontsize=11, fontweight="bold")
                 ax.spines["top"].set_visible(False)
                 ax.spines["right"].set_visible(False)
@@ -308,8 +334,18 @@ def plot_config_analysis(
 
 if __name__ == "__main__":
     # Labels must match algo_label() in hotpotqa_experiment.py (file stems).
-    algorithms = ["IMABO", "Random", "IMABO-noTPE"]  # , "Optuna", "Optuna-k5"]
-    n_samples = 2000
+    # IMABO/IMABO-noTPE (beta=0.8) were archived under beta_0.8/; the new
+    # IMABO-beta0.5 run lives at the top-level RESULTS_DIR.
+    beta_08_dir = RESULTS_DIR / "beta_0.8"
+    algorithms = ["IMABO-beta0.5", "IMOSS-TABFM-beta0.5", "UCB-AIR", "Random"]
+    # dirs = {algo: beta_08_dir for algo in algorithms}
+    dirs = None
+    display_overrides = {
+        "IMABO-beta0.5": "IMOSS-TPE",
+        "IMOSS-TABFM-beta0.5": "IMOSS-TABFM",
+        "UCB-AIR": "UCB-AIR",
+    }
+    n_samples = 5000
     n_runs = 5
     save_fig = True
     plot_hotpotqa_results(
@@ -317,10 +353,7 @@ if __name__ == "__main__":
         n_samples=n_samples,
         n_runs=n_runs,
         save_fig=save_fig,
-    )
-    plot_config_analysis(
-        algorithms=algorithms,
-        n_samples=n_samples,
-        n_runs=n_runs,
-        save_fig=save_fig,
+        dirs=dirs,
+        display_overrides=display_overrides,
+        fig_name=f"hotpotqa_imabo_family_beta_compare_{n_samples}samples.pdf",
     )

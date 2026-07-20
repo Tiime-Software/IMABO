@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from experiments.utils.plots.plot_configs import (
+    adaptive_label_fontsize,
     create_figure_legend,
     display_name,
     get_algorithm_color,
@@ -17,7 +18,7 @@ from experiments.utils.plots.plot_configs import (
 from experiments.ablation_experiment import K_N_ITER, BETA
 
 
-RESULTS_DIR = Path(__file__).parents[3] / "results" / "paper_plots"
+RESULTS_DIR = Path(__file__).parents[3] / "results" / "ablation_experiment"
 
 
 def _format_k_ablation_label(algo, k=None):
@@ -80,9 +81,15 @@ def plot_regret_vs_dimension_tpe_ablation(save_fig=False, beta=0.8):
 
         ax.set_xticks(sorted(df["dimension"].unique()))
         if idx == 1:  # Middle subplot
-            ax.set_xlabel("Dimension", fontweight="bold", fontsize=22)
+            ax.set_xlabel(
+                "Dimension", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+            )
         if idx == 0:  # Left subplot
-            ax.set_ylabel("Average Regret", fontweight="bold", fontsize=22)
+            ax.set_ylabel(
+                "Average Regret",
+                fontweight="bold",
+                fontsize=adaptive_label_fontsize(ax),
+            )
 
         ax.set_title(f"{func.capitalize()}", fontweight="bold", fontsize=22)
         ax.tick_params(axis="both", which="major", labelsize=20)
@@ -156,9 +163,15 @@ def plot_cumulative_regrets_k_experiment(save_fig=False, beta=0.5):
 
         # Only show xlabel on middle subplot and ylabel on left subplot
         if idx == 1:  # Middle subplot
-            ax.set_xlabel("Iteration", fontweight="bold", fontsize=22)
+            ax.set_xlabel(
+                "Iteration", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+            )
         if idx == 0:  # Left subplot
-            ax.set_ylabel("Cumulative Regret", fontweight="bold", fontsize=22)
+            ax.set_ylabel(
+                "Cumulative Regret",
+                fontweight="bold",
+                fontsize=adaptive_label_fontsize(ax),
+            )
 
         ax.set_title(f"{func.capitalize()}", fontweight="bold", fontsize=22)
         ax.tick_params(axis="both", which="major", labelsize=20)
@@ -173,7 +186,9 @@ def plot_cumulative_regrets_k_experiment(save_fig=False, beta=0.5):
 
     if save_fig:
         save_figure(
-            RESULTS_DIR / f"k_experiment_cumulative_regrets_beta_{beta}.pdf",
+            RESULTS_DIR
+            / "paper_plots"
+            / f"k_experiment_cumulative_regrets_beta_{beta}.pdf",
             dpi=300,
             bbox_inches="tight",
             mkdir=False,
@@ -226,7 +241,9 @@ def plot_simple_regret_k_experiment(save_fig=False, beta=0.5):
         ax.set_xticks(x_positions)
         ax.set_xticklabels(x_labels, rotation=45, ha="right", fontsize=22)
         if idx == 0:
-            ax.set_ylabel("Simple Regret", fontweight="bold", fontsize=22)
+            ax.set_ylabel(
+                "Simple Regret", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+            )
         ax.set_title(f"{func.capitalize()}", fontweight="bold", fontsize=22)
         ax.tick_params(axis="y", which="major", labelsize=22)
         ax.set_axisbelow(True)
@@ -252,10 +269,10 @@ if __name__ == "__main__":
     print("Generating cumulative regrets plot...")
     plot_cumulative_regrets_k_experiment(save_fig=save_fig, beta=beta)
 
-    print("Generating simple regret plot...")
-    plot_simple_regret_k_experiment(save_fig=save_fig, beta=beta)
+    # print("Generating simple regret plot...")
+    # plot_simple_regret_k_experiment(save_fig=save_fig, beta=beta)
 
-    print("Generating regret vs dimension (TPE ablation) plot...")
-    plot_regret_vs_dimension_tpe_ablation(save_fig=save_fig, beta=beta)
+    # print("Generating regret vs dimension (TPE ablation) plot...")
+    # plot_regret_vs_dimension_tpe_ablation(save_fig=save_fig, beta=beta)
 
     print("All plots generated successfully!")

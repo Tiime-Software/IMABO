@@ -6,6 +6,7 @@ from pathlib import Path
 
 from experiments.utils.plots.plot_configs import (
     ALGORITHM_COLORS,
+    adaptive_label_fontsize,
     save_figure,
     set_research_style,
 )
@@ -46,9 +47,14 @@ def plot_toy_functions_1d(save_fig=False):
         )
         ax.set_xlim(lo, hi)
 
-        ax.set_xlabel(r"$x$", fontweight="bold", fontsize=22)
-        if idx == 0:
-            ax.set_ylabel("f(x)", fontweight="bold", fontsize=22)
+        if idx == 1:  # Middle subplot
+            ax.set_xlabel(
+                r"$x$", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+            )
+        if idx == 0:  # Left subplot
+            ax.set_ylabel(
+                "f(x)", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
+            )
 
         ax.set_title(label, fontweight="bold", fontsize=22)
         ax.tick_params(axis="both", which="major", labelsize=20)

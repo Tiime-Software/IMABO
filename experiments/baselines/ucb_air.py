@@ -76,7 +76,6 @@ class UCBAIR:
         self,
         search_space: dict[str, Any],
         beta: float = 1.0,
-        ucb_c: float = 1.0,
         mu_star_is_one: bool = True,
         seed: int | None = 42,
     ):
@@ -93,7 +92,6 @@ class UCBAIR:
         self.param_names = sorted(search_space.keys())
         self.distributions, _ = create_search_space(search_space)
         self.beta = beta
-        self.ucb_c = ucb_c
         self.rng = np.random.default_rng(seed)
 
         self.arms: list[_Arm] = []
@@ -142,7 +140,9 @@ class UCBAIR:
 
     def _exploration_sequence(self, t: int) -> float:
         t = max(3, t)
-        return math.log(t)
+        log_t = math.log(t)
+        lower = 2.0 * math.log(10.0 * log_t)
+        return min(log_t, lower)
 
     # -- generator interface -----------------------------------------------
     def suggest(self) -> dict[str, Any]:

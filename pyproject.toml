@@ -31,6 +31,7 @@ experiments = [
     "joblib>=1.2",
     "aiohttp>=3.8",
     "nest-asyncio>=1.5",
+    "scipy>=1.10",
 ]
 
 [project.urls]

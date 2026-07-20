@@ -28,7 +28,7 @@ from experiments.utils.stats import (
 )
 from imabo import IMABO
 
-RESULT_DIR = Path(__file__).parent.parent / "results"
+RESULT_DIR = Path(__file__).parent.parent / "results" / "ablation_experiment"
 RESULT_DIR.mkdir(exist_ok=True)
 
 # ── Sub-experiment 1: TPE oracle impact ───────────────────────────────────────
@@ -38,7 +38,7 @@ TPE_N_ITER = 5000
 TPE_N_RUNS = 10
 
 # ── Sub-experiment 2: MOSS / k impact ─────────────────────────────────────────
-K_VALUES = [50, 70, 100, 200]
+K_VALUES = [1, 10, 50, 70, 100, 200]
 K_DIM = 4
 K_FUNCTIONS = ["sin1", "garland", "rastrigin"]
 K_N_ITER = 5000
@@ -57,11 +57,13 @@ def run_single(
     k: int = 1,
     beta: float = BETA,
 ) -> dict:
-    obj = ObjectiveFunctions(dim=dim, noise_seed=seed)
+    obj = ObjectiveFunctions(dim=dim, noise_seed=seed, noise_std=0.0)
     func = obj.get_function_by_name(function_name)  # built-in noise
     func_noiseless = obj.get_function_by_name(function_name, noise=False)  # noiseless
     fmax = obj.get_theoretical_max(function_name)
     search_space = obj.get_search_space(function_name)
+
+    rng = np.random.default_rng(seed)
 
     if optimizer_type == "random_suggest":
         opt = IMABO(
@@ -95,7 +97,8 @@ def run_single(
         range(n_iterations), desc=f"  {function_name} {dim}D runs", leave=False
     ):
         x = suggest_fn()
-        y = func(x) / dim
+        p = np.clip(func(x) / dim, 0.0, 1.0)
+        y = rng.binomial(1, p)
         regrets.append(fmax - func_noiseless(x) / dim)
         observe_fn(y)
 

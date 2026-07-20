@@ -2,21 +2,27 @@ from pathlib import Path
 import csv
 import json
 import os
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from dotenv import load_dotenv
 from enum import Enum
+from typing import Any
 from tqdm import tqdm
-from imabo import IMABO
+from imabo import IMABO, IMABOTabFM
+from imabo.optimizer import load_tabfm
 from experiments.baselines.optuna_bandit import OptunaBandit
 from experiments.baselines.random_search import RandomSearch
+from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.hotpotqa.benchmark import HotpotQABenchmark
-from experiments.benchmarks.hotpotqa.types import Result, BatchResult
+from experiments.benchmarks.hotpotqa.types import Result
 from openrouter import OpenRouter
 from openrouter.errors import (
     TooManyRequestsResponseError,
     ProviderOverloadedResponseError,
     ServiceUnavailableResponseError,
+    ResponseValidationError,
 )
 from joblib.memory import Memory
 from tenacity import (
@@ -34,6 +40,7 @@ DATA_NAME = "hotpotqa"
 DATA_FOLDER = Path(__file__).parent / "data" / DATA_NAME
 RESULT_FOLDER = Path(__file__).parent.parent / "results" / DATA_NAME
 RESULT_FOLDER.mkdir(parents=True, exist_ok=True)
+BETA = 0.5
 
 
 class Algorithm(Enum):
@@ -41,22 +48,45 @@ class Algorithm(Enum):
     RANDOM = "Random"  # true uniform random search (RandomSearch)
     NO_TPE = "IMABO-noTPE"  # ablation: MOSS-only (IMABO with use_tpe=False)
     OPTUNA = "Optuna"  # sequential TPE with k-observation averaging
+    UCB_AIR = "UCB-AIR"  # infinitely-many-armed bandit, arm-increasing rule + UCBV
+    IMOSS_TABFM = "IMOSS-TABFM"  # IMOSS-TABFM
 
 
-def build_optimizer(algorithm: Algorithm, seed: int, optuna_k: int = 1):
+def build_optimizer(
+    algorithm: Algorithm,
+    seed: int,
+    optuna_k: int = 1,
+    beta: float = 0.8,
+    tabfm_model: Any = None,
+):
     """Construct the optimizer for ``algorithm``.
 
     All returned optimizers expose ``suggest()`` / ``observe(reward)``; use
     :func:`best_config_of` to read the incumbent uniformly across them.
+    ``beta`` (the explore/exploit switching exponent) only applies to
+    IMABO/IMABO-noTPE/IMOSS-TABFM. ``tabfm_model`` should be a single
+    pre-loaded model shared across all seeds (see :func:`load_tabfm`) --
+    IMOSS-TABFM only builds its own copy via ``load_tabfm()`` as a fallback
+    for standalone/one-off calls.
     """
     if algorithm == Algorithm.IMABO:
-        return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=True)
+        return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=True, beta=beta)
     elif algorithm == Algorithm.NO_TPE:
-        return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=False)
+        return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=False, beta=beta)
+    elif algorithm == Algorithm.IMOSS_TABFM:
+        model = tabfm_model if tabfm_model is not None else load_tabfm()
+        return IMABOTabFM(
+            search_space=SEARCH_SPACE,
+            seed=seed,
+            beta=beta,
+            tabfm_model=model,
+        )
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=SEARCH_SPACE, seed=seed)
     elif algorithm == Algorithm.OPTUNA:
         return OptunaBandit(search_space=SEARCH_SPACE, k=optuna_k, seed=seed)
+    elif algorithm == Algorithm.UCB_AIR:
+        return UCBAIR(search_space=SEARCH_SPACE, beta=beta, seed=seed)
 
 
 def best_config_of(optimizer) -> dict | None:
@@ -78,11 +108,19 @@ def require_best_config_of(optimizer) -> dict:
     return config
 
 
-def algo_label(algorithm: Algorithm, optuna_k: int = 1) -> str:
-    """File/stats label; distinguishes Optuna runs with different k."""
+def algo_label(algorithm: Algorithm, optuna_k: int = 1, beta: float = 0.8) -> str:
+    """File/stats label; distinguishes Optuna-k and non-default-beta runs."""
+    label = algorithm.value
     if algorithm == Algorithm.OPTUNA and optuna_k != 1:
-        return f"{algorithm.value}-k{optuna_k}"
-    return algorithm.value
+        label += f"-k{optuna_k}"
+    if algorithm in (
+        Algorithm.IMABO,
+        Algorithm.NO_TPE,
+        Algorithm.IMOSS_TABFM,
+        Algorithm.UCB_AIR,
+    ):
+        label += f"-beta{beta}"
+    return label
 
 
 client = OpenRouter(api_key=os.getenv("OPENROUTER_API_KEY"))
@@ -148,14 +186,16 @@ Answer the question using the provided context.
             TooManyRequestsResponseError,
             ProviderOverloadedResponseError,
             ServiceUnavailableResponseError,
+            ResponseValidationError,
         )
     ),
     wait=wait_random_exponential(multiplier=2, max=300),
-    stop=stop_after_attempt(20),
+    stop=stop_after_attempt(30),
     reraise=True,
 )
 @memory.cache(ignore=["passages"])
 def call_llm(question: str, config: dict, passages: list[str]) -> str:
+    time.sleep(random.uniform(0.3, 0.8))
 
     usr_content = f"Context: {'\n'.join(passages)}\n\nQuestion: {question}"
 
@@ -175,80 +215,6 @@ def call_llm(question: str, config: dict, passages: list[str]) -> str:
     return response.choices[0].message.content
 
 
-def run_single_experiment(
-    n_samples: int = 10,
-    algorithm: Algorithm = Algorithm.IMABO,
-    seed: int = 42,
-    n_holdout: int = 5,
-    batch_size: int = 5,
-    optuna_k: int = 1,
-) -> dict:
-    optimizer = build_optimizer(algorithm, seed, optuna_k=optuna_k)
-    benchmark = HotpotQABenchmark(
-        data_folder=DATA_FOLDER,
-        n_samples=n_samples,
-        n_holdout=n_holdout,
-        seed=seed,
-    )
-    eval_qids = benchmark.train_qids
-    holdout_qids = benchmark.holdout_qids
-
-    n_steps = len(eval_qids) // batch_size
-    ite_results = []
-    for step in tqdm(range(n_steps), desc="Running experiment"):
-        batch_qids = eval_qids[step * batch_size : (step + 1) * batch_size]
-        config = optimizer.suggest()
-        llm_config = {
-            **FIXED_PARAMS,
-            **config,
-            "temperature": round(config["temperature"], 2),
-        }
-        result: BatchResult = benchmark.eval_batch(batch_qids, llm_config, call_llm)
-        reward = result.avg_reward
-        optimizer.observe(reward)
-        ite_results.append(
-            {
-                "qids": batch_qids,
-                "config": config,
-                "reward": reward,
-                "regret": 1.0 - reward,
-                "best_config": best_config_of(optimizer),
-                "raw_results": [asdict(r) for r in result.results],
-            }
-        )
-
-    best_config = {**FIXED_PARAMS, **require_best_config_of(optimizer)}
-    holdout_rewards = []
-    for qid in tqdm(holdout_qids, desc="Evaluating best config"):
-        result: Result = benchmark.eval_question(qid, best_config, call_llm)
-        holdout_rewards.append(result.reward.weighted_f1)
-
-    simple_regret = 1.0 - (sum(holdout_rewards) / len(holdout_rewards))
-
-    with open(RESULT_FOLDER / f"hotpotqa_ite_results_{n_samples}.json", "w") as f:
-        json.dump(ite_results, f, ensure_ascii=False, indent=4)
-
-    with open(RESULT_FOLDER / f"hotpotqa_regret_{n_samples}.json", "w") as f:
-        json.dump(
-            {
-                "best_config": best_config,
-                "simple_regret": simple_regret,
-                "regrets": [ir["regret"] for ir in ite_results],
-                "holdout_rewards": holdout_rewards,
-            },
-            f,
-            ensure_ascii=False,
-            indent=4,
-        )
-
-    return {
-        "regret": [ir["regret"] for ir in ite_results],
-        "simple_regret": simple_regret,
-        "best_config": best_config,
-        "holdout_rewards": holdout_rewards,
-    }
-
-
 def _run_algorithm(
     benchmark: HotpotQABenchmark,
     train_qids: list[str],
@@ -256,11 +222,15 @@ def _run_algorithm(
     algorithm: Algorithm,
     seed: int,
     checkpoint_path: Path,
-    batch_size: int = 1,
     max_workers: int = 4,
     optuna_k: int = 1,
+    beta: float = 0.8,
+    position: int | None = None,
+    tabfm_model: Any = None,
 ) -> dict:
-    optimizer = build_optimizer(algorithm, seed, optuna_k=optuna_k)
+    optimizer = build_optimizer(
+        algorithm, seed, optuna_k=optuna_k, beta=beta, tabfm_model=tabfm_model
+    )
     done = []
     if checkpoint_path.exists():
         with open(checkpoint_path) as f:
@@ -275,55 +245,55 @@ def _run_algorithm(
                     f"--- Dropped truncated final checkpoint line in {checkpoint_path.name} ---"
                 )
 
-    n_steps = len(train_qids) // batch_size
-    batches = [
-        train_qids[s * batch_size : (s + 1) * batch_size] for s in range(n_steps)
-    ]
-
     raw_results = []
     configs = []
     best_configs = []
     regrets = []
     ckpt = open(checkpoint_path, "a")
     try:
-        for step, batch_qids in enumerate(
-            tqdm(batches, desc=f"{algorithm.value} seed{seed}", leave=False)
+        for step, qid in enumerate(
+            tqdm(
+                train_qids,
+                desc=f"{algorithm.value} seed{seed}",
+                leave=False,
+                position=position,
+            )
         ):
             config = optimizer.suggest()
             if step < len(done):
                 rec = done[step]
-                if rec["qids"] != batch_qids:
+                if rec["qid"] != qid:
                     raise ValueError(
-                        f"Checkpoint mismatch at step {step}: expected qids {batch_qids}, "
-                        f"found {rec['qids']}. Stale checkpoint for seed {seed} "
-                        f"(different sampling/batch_size/search space?)."
+                        f"Checkpoint mismatch at step {step}: expected qid {qid}, "
+                        f"found {rec['qid']}. Stale checkpoint for seed {seed} "
+                        f"(different sampling/search space?)."
                     )
                 optimizer.observe(rec["reward"])
                 regrets.append(rec["regret"])
                 configs.append(rec["config"])
                 best_configs.append(rec["best_config"])
-                raw_results.extend(rec["raw_results"])
+                raw_results.append(rec["raw_result"])
                 continue
             llm_config = {
                 **FIXED_PARAMS,
                 **config,
                 "temperature": round(config["temperature"], 2),
             }
-            batch: BatchResult = benchmark.eval_batch(batch_qids, llm_config, call_llm)
-            reward = batch.avg_reward
+            result: Result = benchmark.eval_question(qid, llm_config, call_llm)
+            reward = result.reward.weighted_f1
             optimizer.observe(reward)
             rec = {
-                "qids": batch_qids,
+                "qid": qid,
                 "config": config,
                 "reward": reward,
                 "regret": 1.0 - reward,
                 "best_config": best_config_of(optimizer),
-                "raw_results": [asdict(r) for r in batch.results],
+                "raw_result": asdict(result),
             }
             regrets.append(rec["regret"])
             configs.append(config)
             best_configs.append(rec["best_config"])
-            raw_results.extend(rec["raw_results"])
+            raw_results.append(rec["raw_result"])
             ckpt.write(json.dumps(rec, ensure_ascii=False) + "\n")
             ckpt.flush()
     finally:
@@ -339,7 +309,11 @@ def _run_algorithm(
         }
         holdout_rewards_map = {}
         for future in tqdm(
-            as_completed(futures), total=len(futures), desc="Holdout", leave=False
+            as_completed(futures),
+            total=len(futures),
+            desc=f"Holdout seed{seed}",
+            leave=False,
+            position=position,
         ):
             holdout_rewards_map[futures[future]] = future.result().reward.weighted_f1
     holdout_rewards = [holdout_rewards_map[i] for i in range(len(holdout_qids))]
@@ -433,9 +407,10 @@ def run_multiple_experiments(
     n_runs: int = 5,
     base_seed: int = 42,
     n_holdout: int = 100,
-    batch_size: int = 1,
     algorithm: Algorithm = Algorithm.IMABO,
     optuna_k: int = 1,
+    beta: float = 0.8,
+    max_parallel_runs: int = 5,
 ) -> list[dict]:
     # Built once; the Dense index spans the full corpus, so each run only
     # re-samples its (train, holdout) split per seed (no embedding rebuild).
@@ -446,40 +421,55 @@ def run_multiple_experiments(
         seed=base_seed,
     )
 
-    label = algo_label(algorithm, optuna_k)
+    label = algo_label(algorithm, optuna_k, beta)
+    seeds = [base_seed + i * 1000 for i in range(n_runs)]
 
-    all_results = []
-    for i in tqdm(range(n_runs), desc="Runs"):
-        seed = base_seed + i * 1000
+    tabfm_model = load_tabfm() if algorithm == Algorithm.IMOSS_TABFM else None
+
+    splits: dict[int, tuple[list[str], list[str]]] = {}
+    for seed in seeds:
+        benchmark.resample(seed)
+        splits[seed] = (list(benchmark.train_qids), list(benchmark.holdout_qids))
+
+    def run_one(i: int) -> dict:
+        seed = seeds[i]
         stem = f"{label}_hotpotqa_{n_samples}samples"
         run_path = RESULT_FOLDER / f"{stem}_run{i}.json"
         # A finished run (training + holdout) is saved as run{i}.json — skip it.
         if run_path.exists():
             with open(run_path) as f:
-                all_results.append(json.load(f))
+                run_result = json.load(f)
             tqdm.write(f"--- Run {i} (seed {seed}) already complete, skipping ---")
-            continue
-        # Each run is an independent problem instance: draw a fresh train/holdout
-        # split for this seed. Within a seed the split is still a stable prefix,
-        # so the per-seed checkpoint stays valid across n_samples.
-        benchmark.resample(seed)
+            return run_result
+
+        train_qids, holdout_qids = splits[seed]
         checkpoint_path = (
-            RESULT_FOLDER
-            / f"checkpoint_{label}_hotpotqa_seed{seed}_batch{batch_size}.jsonl"
+            RESULT_FOLDER / f"checkpoint_{label}_hotpotqa_seed{seed}.jsonl"
         )
         run_result = _run_algorithm(
             benchmark,
-            benchmark.train_qids,
-            benchmark.holdout_qids,
+            train_qids,
+            holdout_qids,
             algorithm,
             seed,
             checkpoint_path,
-            batch_size=batch_size,
             optuna_k=optuna_k,
+            beta=beta,
+            position=i,
+            tabfm_model=tabfm_model,
         )
-        all_results.append(run_result)
         with open(run_path, "w") as f:
             json.dump(run_result, f, ensure_ascii=False, indent=4)
+        return run_result
+
+    with ThreadPoolExecutor(max_workers=min(max_parallel_runs, n_runs)) as executor:
+        all_results = list(
+            tqdm(
+                executor.map(run_one, range(n_runs)),
+                total=n_runs,
+                desc="Runs",
+            )
+        )
 
     with open(
         RESULT_FOLDER / f"{label}_hotpotqa_multi_{n_samples}samples_{n_runs}runs.json",
@@ -493,14 +483,16 @@ def run_multiple_experiments(
 
 
 if __name__ == "__main__":
-    n_samples = 2000
+    n_samples = 5000
     n_runs = 5
-    n_holdout = 200
-    algorithm = Algorithm.NO_TPE
+    n_holdout = 500
+    algorithm = Algorithm.UCB_AIR
 
     run_multiple_experiments(
         n_samples=n_samples,
         n_runs=n_runs,
         n_holdout=n_holdout,
         algorithm=algorithm,
+        beta=BETA,
+        max_parallel_runs=n_runs,
     )

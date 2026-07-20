@@ -42,6 +42,41 @@ def display_name(name: str) -> str:
     return DISPLAY_NAME_OVERRIDES.get(name, name)
 
 
+LEGEND_PT_PER_INCH = 1.1
+LEGEND_FONTSIZE_MIN = 12
+LEGEND_FONTSIZE_MAX = 32
+
+AXIS_LABEL_PT_PER_INCH = 5.2
+AXIS_LABEL_FONTSIZE_MIN = 11
+AXIS_LABEL_FONTSIZE_MAX = 32
+
+
+def adaptive_label_fontsize(
+    ax,
+    pt_per_inch: float = AXIS_LABEL_PT_PER_INCH,
+    fmin: float = AXIS_LABEL_FONTSIZE_MIN,
+    fmax: float = AXIS_LABEL_FONTSIZE_MAX,
+) -> float:
+    """Axis-label fontsize scaled from this Axes' smaller dimension (inches).
+
+    Uses whichever of width/height is smaller: an x-label needs horizontal
+    room (bounded by axes width) and a rotated y-label needs vertical room
+    (bounded by axes height), so a figure that's short (small height, e.g.
+    figsize=(14, 5)) must get a smaller label than a tall one even at the
+    same column count -- otherwise a long label ("Normalized Cumulative
+    Regret") overflows/clips in the short figure. Using fractional width
+    alone (ignoring inches) fixed inconsistent sizing across figures with
+    different nominal `figsize` for the same column count, but broke this
+    case; the smaller-dimension-in-inches version handles both.
+    """
+    fig = ax.get_figure()
+    fig_w_in, fig_h_in = fig.get_size_inches()
+    bbox = ax.get_position()
+    ax_w_in = bbox.width * fig_w_in
+    ax_h_in = bbox.height * fig_h_in
+    return float(np.clip(min(ax_w_in, ax_h_in) * pt_per_inch, fmin, fmax))
+
+
 def create_figure_legend(
     fig,
     handles,
@@ -49,8 +84,15 @@ def create_figure_legend(
     *,
     ncol: int,
     bbox_y: float = 1.08,
-    fontsize: int = 22,
+    fontsize: float | None = None,
 ) -> None:
+    """Add a shared top legend to `fig`."""
+    if fontsize is None:
+        fig_width, _ = fig.get_size_inches()
+        fontsize = np.clip(
+            fig_width * LEGEND_PT_PER_INCH, LEGEND_FONTSIZE_MIN, LEGEND_FONTSIZE_MAX
+        )
+
     fig.legend(
         handles,
         labels,

@@ -2,10 +2,9 @@ from pathlib import Path
 import json
 import time
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from experiments.benchmarks.hotpotqa.embedding import BM25Index, DenseIndex
 from experiments.benchmarks.hotpotqa.metrics import compute_reward, Reward
-from experiments.benchmarks.hotpotqa.types import Result, BatchResult
+from experiments.benchmarks.hotpotqa.types import Result
 from beir.datasets.data_loader import GenericDataLoader
 
 
@@ -123,12 +122,6 @@ class HotpotQABenchmark:
             )
         self.train_qids = perm[:n_train]
         self.holdout_qids = perm[len(perm) - n_holdout :] if n_holdout > 0 else []
-        chosen = self.train_qids + self.holdout_qids
-        self.queries = {qid: self._all_queries[qid] for qid in chosen}
-        self.gold = {qid: self._all_gold[qid] for qid in chosen}
-        self.supporting_facts = {
-            qid: self._all_supporting.get(qid, []) for qid in chosen
-        }
         print(
             f"--- {len(self.train_qids)} train + {len(self.holdout_qids)} "
             f"holdout queries sampled (seed {seed}) ---"
@@ -163,7 +156,16 @@ class HotpotQABenchmark:
         # return self._bm25.retrieve(question, top_k=top_k)
 
     def eval_question(self, qid: str, config: dict, llm_fn) -> Result:
-        question = self.queries[qid]
+        """Evaluate a single question.
+
+        Reads from the full ``_all_*`` maps (built once in ``__init__`` and
+        never mutated again) rather than the per-split ``train_qids``/
+        ``holdout_qids`` state, so concurrent calls are safe even while
+        another thread is mid-``resample()``.
+        """
+        question = self._all_queries[qid]
+        supporting_facts = self._all_supporting.get(qid, [])
+        gold = self._all_gold[qid]
         doc_ids = self._retrieve_doc_ids(question, config)
         passages = [
             self._corpus[d].get("title", "") + ": " + self._corpus[d].get("text", "")
@@ -171,48 +173,15 @@ class HotpotQABenchmark:
         ]
         retrieved_titles = [self._corpus[d].get("title", "") for d in doc_ids]
         pred = llm_fn(question, config, passages)
-        reward: Reward = compute_reward(
-            pred, self.gold[qid], retrieved_titles, self.supporting_facts[qid]
-        )
+        reward: Reward = compute_reward(pred, gold, retrieved_titles, supporting_facts)
 
         return Result(
             qid=qid,
             question=question,
             retrieved_titles=retrieved_titles,
-            supporting_facts=self.supporting_facts[qid],
+            supporting_facts=supporting_facts,
             passages=passages,
-            gold=self.gold[qid],
+            gold=gold,
             pred=pred,
             reward=reward,
-        )
-
-    def eval_batch(
-        self,
-        qids: list[str],
-        config: dict,
-        llm_fn,
-        max_workers: int = 10,
-    ) -> dict:
-        """Evaluate a config on a batch of questions in parallel.
-
-        Returns a dict mirroring the HPOBenchmark pattern:
-            results    : list[Result] in qids order
-            rewards    : list[float] weighted_f1 per question
-            avg_reward : float mean reward across the batch (use this for optimizer.observe)
-        """
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self.eval_question, qid, config, llm_fn): i
-                for i, qid in enumerate(qids)
-            }
-            results_map: dict[int, Result] = {}
-            for future in as_completed(futures):
-                results_map[futures[future]] = future.result()
-
-        results = [results_map[i] for i in range(len(qids))]
-        rewards = [r.reward.weighted_f1 for r in results]
-        return BatchResult(
-            results=results,
-            rewards=rewards,
-            avg_reward=float(np.mean(rewards)),
         )

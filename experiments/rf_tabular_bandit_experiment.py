@@ -1,19 +1,4 @@
-"""Hyperparameter optimization as a finite-armed Bernoulli bandit.
-
-Each arm is a RandomForest hyperparameter configuration from a real OpenML
-tabular benchmark; pulling an arm draws a Bernoulli sample whose success
-probability is that configuration's validation accuracy. Because the arm set
-is finite and its accuracies are precomputed, both the optimum and the regret
-of every pull are known exactly, with no model re-fitting required.
-
-Compares the IMOSS bandit framework -- with a TPE, uniform, or TabFM proposal
-oracle -- against classic infinite-armed bandit baselines, across benchmarks
-spanning easy to hard reward-noise regimes. Each run is checkpointed to its
-own file, so re-running only completes missing seeds or algorithms.
-
-Usage (from repo root):
-    python -m experiments.rf_tabular_bandit_experiment
-"""
+"""Hyperparameter optimization as a finite-armed Bernoulli bandit."""
 
 import copy
 import json
@@ -170,19 +155,7 @@ def run_multiple_experiments(
     noise: bool = True,
     n_jobs: int = N_JOBS,
 ) -> list[dict]:
-    """Run multiple independent runs of a single algorithm.
-
-    Each run is checkpointed to its own JSON file -- a run that's already on
-    disk is loaded instead of re-executed, so re-running this (e.g. after
-    adding more runs or budgets) never re-does completed work. Runs still
-    missing a checkpoint are executed concurrently via joblib (threading
-    backend -- each run's compute is numpy/sklearn-heavy and releases the
-    GIL). Each thread gets its own shallow copy of `bench` re-seeded via
-    `reset_noise`, since `bench.rng` is mutable and shared across threads
-    otherwise -- both a data race and a reproducibility bug (concurrent
-    runs would consume from the same noise stream instead of their own
-    per-seed one).
-    """
+    """Run multiple independent runs of a single algorithm."""
     stem = f"{benchmark_tag(bench.bm_id, noise)}_{algo_slug(algorithm)}_{n_iterations}iters"
 
     all_results: list[dict | None] = [None] * n_runs

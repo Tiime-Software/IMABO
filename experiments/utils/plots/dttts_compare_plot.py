@@ -6,7 +6,11 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from pathlib import Path
 
-from experiments.utils.plots.plot_configs import save_figure, set_research_style
+from experiments.utils.plots.plot_configs import (
+    adaptive_label_fontsize,
+    save_figure,
+    set_research_style,
+)
 
 set_research_style()
 
@@ -105,9 +109,12 @@ def plot_dttts_compare(save_fig: bool = False):
             )
 
         ax_top.set_title(fn, fontsize=13, fontweight="bold")
-        ax_top.set_xlabel("pulls t", fontsize=11)
+        if col == len(functions) // 2:  # Middle subplot
+            ax_top.set_xlabel("pulls t", fontsize=adaptive_label_fontsize(ax_top))
         if col == 0:
-            ax_top.set_ylabel("normalized\ncumulative regret", fontsize=11)
+            ax_top.set_ylabel(
+                "normalized\ncumulative regret", fontsize=adaptive_label_fontsize(ax_top)
+            )
         ax_top.tick_params(labelsize=9)
         ax_top.spines["top"].set_visible(False)
         ax_top.spines["right"].set_visible(False)
@@ -120,7 +127,9 @@ def plot_dttts_compare(save_fig: bool = False):
         # ── bottom: simple regret strip ─────────────────────────────────────
         _strip(ax_bot, results[fn], algos)
         if col == 0:
-            ax_bot.set_ylabel("normalized\nsimple regret", fontsize=11)
+            ax_bot.set_ylabel(
+                "normalized\nsimple regret", fontsize=adaptive_label_fontsize(ax_bot)
+            )
 
         # align y-axis right label annotation
         if col == len(functions) - 1:

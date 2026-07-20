@@ -5,9 +5,11 @@ Plots for toy benchmark experiment results (experiments/toy_experiment.py).
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from pathlib import Path
 
 from experiments.utils.plots.plot_configs import (
+    adaptive_label_fontsize,
     confidence_ellipse,
     create_figure_legend,
     display_name,
@@ -32,7 +34,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
         exp_type: Experiment type for filename
     """
     n_benchmarks = len(benchmarks)
-    fig, axes = plt.subplots(1, n_benchmarks, figsize=(8 * n_benchmarks, 8))
+    fig, axes = plt.subplots(1, n_benchmarks, figsize=(10 * n_benchmarks, 8))
 
     if n_benchmarks == 1:
         axes = [axes]
@@ -140,10 +142,15 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                 zorder=5,
             )
 
-        ax.set_xlabel("Simple Regret", fontweight="bold", fontsize=22)
+        label_fs = adaptive_label_fontsize(ax)
+        # Only show xlabel on the middle subplot and ylabel on the left
+        # subplot, matching ablation_plot.py's convention (one shared label
+        # per axis instead of repeating it under/beside every panel).
+        if ax_idx == n_benchmarks // 2:
+            ax.set_xlabel("Simple Regret", fontweight="bold", fontsize=35)
         if ax_idx == 0:
             ax.set_ylabel(
-                "Normalized Cumulative Regret", fontweight="bold", fontsize=22
+                "Normalized Cumulative Regret", fontweight="bold", fontsize=30
             )
         ax.set_title(benchmark.upper(), fontweight="bold", fontsize=24, pad=15)
         ax.tick_params(axis="both", which="major", labelsize=30)
@@ -151,9 +158,23 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    handles, labels = axes[0].get_legend_handles_labels()
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker=markers[i],
+            color=get_algorithm_color(i),
+            markerfacecolor=get_algorithm_color(i),
+            markeredgecolor="white",
+            markeredgewidth=1.5,
+            markersize=16,
+            linestyle="",
+        )
+        for i in range(len(algorithms))
+    ]
+    legend_labels = [display_name(algorithm) for algorithm in algorithms]
     create_figure_legend(
-        fig, handles, labels, ncol=len(algorithms), bbox_y=1.05, fontsize=30
+        fig, legend_handles, legend_labels, ncol=len(algorithms), bbox_y=1.05
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
