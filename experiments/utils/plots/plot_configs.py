@@ -1,5 +1,7 @@
 """Style configuration and color constants for IMABO experiment plots."""
 
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -35,12 +37,167 @@ def get_algorithm_color(index: int) -> str:
     return ALGORITHM_COLORS[index % len(ALGORITHM_COLORS)]
 
 
-DISPLAY_NAME_OVERRIDES = {"IMABO": "I-MOSS-TPE"}
+# Keep display labels identical to the canonical identities in
+# ALGORITHM_STYLES below, so the same method reads the same in every figure.
+DISPLAY_NAME_OVERRIDES = {"IMABO": "IMOSS-TPE"}
 
 
 def display_name(name: str) -> str:
     return DISPLAY_NAME_OVERRIDES.get(name, name)
 
+
+# --- Canonical per-algorithm styling --------------------------------------
+# A method must look identical in every figure -- same color, same marker --
+# no matter which script drew it or what order it appears in. The scripts feed
+# raw series names that vary in spelling/casing/suffix ("IMABO", "imoss_tpe",
+# "IMABO-beta0.5", "IMOSS-TABFM", ...); normalize_algorithm_name() folds those
+# to one canonical identity, and ALGORITHM_STYLES pins each identity to a fixed
+# (color, marker). This replaced the old by-list-position coloring in hpo_plot
+# / hotpotqa_plot, which let the same method change color between figures.
+#
+# Every figure draws from ONE 4-color palette -- blue, orange, green, vermillion
+# -- all from the Wong (Nature Methods, 2011) set, so each plot has the same
+# look as the RF figure. Each figure happens to show exactly four series, so all
+# four colors appear once per figure (no palette's hard-to-read yellow, no gray).
+#
+# Colorblind note: orange and vermillion are the one pair in this palette that
+# converge (both -> gold) under deuteranopia. Every figure pairs them (IMOSS-TPE
+# orange + UCB-AIR/Stroquool vermillion), so they always need a second,
+# color-independent channel: the line plots have unique per-method MARKERS, and
+# the one marker-less chart (hotpotqa's simple-regret bars) gets HATCH patterns
+# (see plot_hotpotqa_results). With that, the palette reads correctly under
+# deuteranopia/protanopia.
+#
+# Methods that appear in more than one figure keep one fixed color (IMOSS-TPE
+# orange, IMOSS-TabFM green, UCB-AIR vermillion); the figure-specific ones fill
+# the remaining slots. Blue and green/vermillion are reused across methods that
+# NEVER co-occur, which is safe -- distinctness only has to hold within a single
+# figure. Markers stay unique per method regardless.
+_PALETTE_BLUE = "#0072B2"
+_PALETTE_ORANGE = "#E69F00"
+_PALETTE_GREEN = "#009E73"
+_PALETTE_VERMILLION = "#D55E00"
+ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
+    "IMOSS": (_PALETTE_BLUE, "o"),  # rf
+    "IMOSS-TPE": (_PALETTE_ORANGE, "^"),  # rf, hotpotqa, hpo   (a.k.a. IMABO)
+    "IMOSS-TabFM": (_PALETTE_GREEN, "s"),  # rf, hotpotqa
+    "UCB-AIR": (_PALETTE_VERMILLION, "D"),  # rf, hotpotqa
+    "Random": (_PALETTE_BLUE, "p"),  # hotpotqa (no overlap with IMOSS)
+    "HOO-T": (_PALETTE_BLUE, "v"),  # hpo
+    "StoSOO": (_PALETTE_GREEN, "<"),  # hpo
+    "Stroquool": (_PALETTE_VERMILLION, ">"),  # hpo
+}
+
+_DEFAULT_ALGORITHM_STYLE = ("#000000", "o")
+
+# Raw-name -> canonical-identity aliases (matched after case/suffix folding).
+_ALGORITHM_ALIASES = {
+    "imabo": "IMOSS-TPE",
+    "imabo-notpe": "IMOSS",
+    "imoss": "IMOSS",
+    "imoss-tpe": "IMOSS-TPE",
+    "imoss-tabfm": "IMOSS-TabFM",
+    "ucb-air": "UCB-AIR",
+    "ucbair": "UCB-AIR",
+    "random": "Random",
+    "random-search": "Random",
+    "hoo-t": "HOO-T",
+    "hoo": "HOO-T",
+    "stosoo": "StoSOO",
+    "stroquool": "Stroquool",
+}
+
+
+def normalize_algorithm_name(name: str) -> str:
+    """Fold a raw series name to its canonical identity in ALGORITHM_STYLES.
+
+    Absorbs the spelling/casing/suffix drift across scripts and experiments: a
+    trailing run-config tag ("-beta0.5", "_beta_0.8") is dropped, "_" is
+    treated as "-", and matching is case-insensitive. Returns the input
+    unchanged if nothing matches, so an unknown series still plots (with the
+    default style) rather than raising."""
+    key = name.strip().lower().replace("_", "-")
+    key = re.sub(r"-beta[-\d.]*$", "", key)  # drop trailing run-config tag
+    return _ALGORITHM_ALIASES.get(key, name)
+
+
+def algorithm_style(name: str) -> tuple[str, str]:
+    """(color, marker) for a series, consistent across every figure -- see
+    normalize_algorithm_name and ALGORITHM_STYLES."""
+    return ALGORITHM_STYLES.get(normalize_algorithm_name(name), _DEFAULT_ALGORITHM_STYLE)
+
+
+def algorithm_color(name: str) -> str:
+    return algorithm_style(name)[0]
+
+
+def algorithm_marker(name: str) -> str:
+    return algorithm_style(name)[1]
+
+
+# --- Print-figure sizing -----------------------------------------------
+# CONFERENCE_PAGE_WIDTHS_IN maps a conference name -> two physical widths (in):
+#   "single_column" -- a narrow figure (columns=1): one of AAAI's two text
+#       columns, or half of NeurIPS' single text column for side-by-side use.
+#   "double_column" -- a full-text-width figure (columns=2): AAAI's `figure*`
+#       spanning both columns, or NeurIPS' full 5.5in text block.
+# So `columns` means the same thing for both: 1 = narrow, 2 = full width.
+#   AAAI    -- aaai2027 .sty: \textwidth 7.0in, \columnsep 0.375in, so one
+#              column is (7.0-0.375)/2 = 3.31in. Two-column template.
+#   NeurIPS -- neurips .sty: \textwidth 5.5in, single-column template; the
+#              "single_column" half (2.65in) is for two figures side by side.
+#   arXiv   -- article/arxiv.sty on letterpaper with ~1in margins: \textwidth
+#              6.5in, single-column; the "single_column" half (3.1in) is for
+#              two figures side by side.
+CONFERENCE_PAGE_WIDTHS_IN = {
+    "aaai": {"single_column": 3.3, "double_column": 7.0},
+    "neurips": {"single_column": 2.65, "double_column": 5.5},
+    "arxiv": {"single_column": 3.1, "double_column": 6.5},
+}
+
+
+def paper_figure_width_in(columns: int = 2, conference: str = "aaai") -> float:
+    """Physical width (inches) to generate a figure at for a `columns`-wide
+    (1 = narrow / single text column, 2 = full text width) placement in
+    `conference`'s template, so it embeds at ~100% scale without needing to be
+    shrunk afterward."""
+    widths = CONFERENCE_PAGE_WIDTHS_IN[conference]
+    if columns == 1:
+        return widths["single_column"]
+    if columns == 2:
+        return widths["double_column"]
+    raise ValueError(f"columns must be 1 or 2, got {columns!r}")
+
+
+# Plain pt sizes for a figure generated via paper_figure_width_in. Same
+# regardless of column count -- these are absolute print sizes (~7-9pt, close
+# to a paper's 10pt body text), not scaled to the panel's own physical size.
+PAPER_TITLE_FONTSIZE = 9
+PAPER_TICK_FONTSIZE = 6.5
+PAPER_LABEL_FONTSIZE = 8.5
+PAPER_LEGEND_FONTSIZE = 8
+
+
+def legend_ncol_for_columns(
+    n_labels: int, columns: int, max_single_row: int = 3
+) -> int:
+    """Legend column count for a paper_figure_width_in-sized figure: at
+    columns=2 (a figure*) there's usually enough width for every entry on one
+    row; at columns=1 there usually isn't, so entries beyond max_single_row
+    wrap onto a second row instead of squeezing (and shrinking the rest of
+    the figure to make room for) one very wide legend row.
+    """
+    if columns == 2 or n_labels <= max_single_row:
+        return n_labels
+    return -(-n_labels // 2)  # ceil(n_labels / 2) -> 2 rows
+
+# AAAI-specific aliases, kept as the reference values the above were derived
+# from (7.0in double-column \textwidth == paper_figure_width_in(2, "aaai")).
+AAAI_TEXTWIDTH_IN = CONFERENCE_PAGE_WIDTHS_IN["aaai"]["double_column"]
+AAAI_TITLE_FONTSIZE = PAPER_TITLE_FONTSIZE
+AAAI_TICK_FONTSIZE = PAPER_TICK_FONTSIZE
+AAAI_LABEL_FONTSIZE = PAPER_LABEL_FONTSIZE
+AAAI_LEGEND_FONTSIZE = PAPER_LEGEND_FONTSIZE
 
 LEGEND_PT_PER_INCH = 1.1
 LEGEND_FONTSIZE_MIN = 12
@@ -49,6 +206,106 @@ LEGEND_FONTSIZE_MAX = 32
 AXIS_LABEL_PT_PER_INCH = 5.2
 AXIS_LABEL_FONTSIZE_MIN = 11
 AXIS_LABEL_FONTSIZE_MAX = 32
+LINEWIDTH = 2.5
+MARKERSIZE = 8
+FONTSIZE_LEGEND = 30
+
+
+@dataclass(frozen=True)
+class PaperStyle:
+    """One bundle of everything needed to draw a figure at final print size
+    for a given (conference, columns) target: physical width, absolute font
+    sizes, and line/marker/grid/legend geometry.
+
+    The point is that retargeting a figure -- single column <-> full width,
+    AAAI <-> NeurIPS -- is a one-line change (swap the style), not a hunt for
+    every hard-coded `linewidth=`, `fontsize=`, `markersize=` and legend
+    `ncol` at the call sites. Get one via `paper_style(conference, columns)`
+    and thread it through the plot.
+
+    Sizes are absolute print points/inches (the figure is generated at its
+    final embedded size, not oversized-then-shrunk), so they're deliberately
+    the SAME across conferences and column counts -- the only things that
+    change per target are `width_in` and how the legend wraps. Override any
+    field per call via `paper_style(..., linewidth=2.0)` etc.
+    """
+
+    conference: str
+    columns: int
+    width_in: float
+
+    # Absolute print font sizes (see PAPER_* above).
+    title_fontsize: float = PAPER_TITLE_FONTSIZE
+    label_fontsize: float = PAPER_LABEL_FONTSIZE
+    tick_fontsize: float = PAPER_TICK_FONTSIZE
+    legend_fontsize: float = PAPER_LEGEND_FONTSIZE
+
+    # Line / marker / grid / errorbar geometry, tuned for the small panels of
+    # a print-size figure (the previous per-call hard-coded values).
+    linewidth: float = 1.2
+    markersize: float = 3.5
+    markevery_divisor: int = 8
+    grid_alpha: float = 0.3
+    grid_linewidth: float = 0.4
+    band_alpha: float = 0.15
+    capsize: float = 2.5
+    capthick: float = 1.0
+
+    max_legend_single_row: int = 3
+
+    def legend_ncol(self, n_labels: int) -> int:
+        return legend_ncol_for_columns(
+            n_labels, self.columns, self.max_legend_single_row
+        )
+
+    def n_legend_rows(self, n_labels: int) -> int:
+        return -(-n_labels // self.legend_ncol(n_labels))  # ceil division
+
+    def markevery(self, n_points: int) -> int:
+        return max(1, n_points // self.markevery_divisor)
+
+    def style_axis(self, ax, *, grid_axis: str = "both") -> None:
+        """Apply the shared paper look to one Axes: tick-label size, a faint
+        grid, and no top/right spines."""
+        ax.tick_params(axis="both", which="major", labelsize=self.tick_fontsize)
+        ax.set_axisbelow(True)
+        ax.grid(True, axis=grid_axis, alpha=self.grid_alpha, linewidth=self.grid_linewidth)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    def legend(
+        self, fig, handles, labels, *, n_labels: int | None = None, bbox_y=None
+    ) -> int:
+        """Add the shared top legend, wrapped for this target's width, and
+        return the number of legend rows (so the caller can reserve headroom
+        in tight_layout)."""
+        n = len(labels) if n_labels is None else n_labels
+        rows = self.n_legend_rows(n)
+        if bbox_y is None:
+            bbox_y = 1.0 if rows == 1 else 1.03
+        create_figure_legend(
+            fig,
+            handles,
+            labels,
+            ncol=self.legend_ncol(n),
+            bbox_y=bbox_y,
+            fontsize=self.legend_fontsize,
+        )
+        return rows
+
+
+def paper_style(
+    conference: str = "aaai", columns: int = 1, **overrides
+) -> PaperStyle:
+    """Build a PaperStyle for a `columns`-wide (1 = narrow, 2 = full text
+    width) placement in `conference`'s template. Extra keyword args override
+    individual fields, e.g. `paper_style("neurips", 2, linewidth=2.0)`."""
+    return PaperStyle(
+        conference=conference,
+        columns=columns,
+        width_in=paper_figure_width_in(columns=columns, conference=conference),
+        **overrides,
+    )
 
 
 def adaptive_label_fontsize(
@@ -170,6 +427,11 @@ def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
 def set_research_style():
     plt.rcParams.update(
         {
+            # Default color cycle = the Wong colorblind-safe palette, so even
+            # plots that don't go through algorithm_style/get_algorithm_color
+            # (i.e. anything relying on matplotlib's automatic C0/C1/... colors)
+            # come out colorblind-safe rather than using the default tab10.
+            "axes.prop_cycle": plt.cycler(color=ALGORITHM_COLORS),
             "font.size": 12,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "DejaVu Serif"],

@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
 from experiments.utils.plots.plot_configs import (
     adaptive_label_fontsize,
+    algorithm_style,
     create_figure_legend,
     get_algorithm_color,
     save_figure,
@@ -75,15 +76,12 @@ _BENCH_NAMES = {
 
 
 def _style_for(algo: str) -> tuple[str, str]:
-    """(color, marker) fixed by the algorithm's canonical position, so the same
-    algorithm keeps one look across every panel. Unknown labels fall back to a
-    hash-free append at the end of the order."""
-    idx = (
-        _CANONICAL_ORDER.index(algo)
-        if algo in _CANONICAL_ORDER
-        else len(_CANONICAL_ORDER)
-    )
-    return _algo_color(idx), _BASE_MARKERS[idx % len(_BASE_MARKERS)]
+    """(color, marker) fixed per algorithm, so the same method keeps one look
+    across every panel and every figure. Delegates to the shared canonical
+    registry (plot_configs.algorithm_style) -- the single source of truth used
+    by every plot script; the local _CANONICAL_ORDER/_algo_color/_BASE_MARKERS
+    below are kept only for _ordered() and any legacy callers."""
+    return algorithm_style(algo)
 
 
 def _ordered(present) -> list[str]:

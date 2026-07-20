@@ -9,8 +9,10 @@ from pathlib import Path
 
 from experiments.utils.plots.plot_configs import (
     set_research_style,
-    get_algorithm_color,
+    algorithm_style,
     create_figure_legend,
+    get_algorithm_color,
+    paper_style,
     save_figure,
     adaptive_label_fontsize,
 )
@@ -21,7 +23,7 @@ RESULTS_DIR = Path(__file__).parents[3] / "results" / "hotpotqa"
 ALGO_DISPLAY_NAMES = {
     "IMABO": "IMOSS-TPE",
     "IMABO-noTPE": "IMOSS",
-    "IMOSS-TABFM": "IMOSS-TABFM",
+    "IMOSS-TABFM": "IMOSS-TabFM",
     "UCB-AIR": "UCB-AIR",
 }
 
@@ -43,6 +45,8 @@ def plot_hotpotqa_results(
     fig_name: str | None = None,
     display_overrides: dict[str, str] | None = None,
     dirs: dict[str, Path] | None = None,
+    columns: int = 2,
+    conference: str = "aaai",
 ) -> None:
     """
     Side-by-side plot: cumulative regret over iterations (left) and
@@ -59,17 +63,46 @@ def plot_hotpotqa_results(
             without touching the shared display-name map).
         dirs: Per-algorithm results directory override (default RESULTS_DIR),
             for when a series' CSVs live in a different subfolder.
+        columns: 1 (fits a single column) or 2 (spans both columns, a LaTeX
+            `figure*`) -- see plot_configs.paper_figure_width_in.
+        conference: Which conference's column widths to use (default "aaai").
     """
     names = {**ALGO_DISPLAY_NAMES, **(display_overrides or {})}
     label_of = lambda algo: names.get(algo, algo)
     dir_of = lambda algo: (dirs or {}).get(algo, RESULTS_DIR)
+    # Legend forced onto a single row (ncol = n algorithms, see the direct
+    # create_figure_legend call below) at a reduced font so all four names fit
+    # across the column width without wrapping. A 1-row legend also needs only
+    # a thin top band, which pulls it close to the top panel.
+    style = paper_style(conference=conference, columns=columns, legend_fontsize=5.5)
+    algo_tick_fontsize = style.tick_fontsize - 1.0
+    n_legend_rows = 1
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 3))
-    base_markers = ["o", "^", "s", "D", "v", "P", "X", "*"]
-    rng = np.random.default_rng(0)
+    legend_band_in = 0.15 * n_legend_rows + 0.03
+    # Layout adapts to the placement: full text width (columns=2) fits the two
+    # panels side by side; a single narrow column (columns=1) is too tight for
+    # that (each panel would be ~half a column), so stack them vertically --
+    # each panel then spans the full column width. Taller, but that's the
+    # natural shape for a single-column figure, and the extra height is what
+    # makes the closely-spaced online-regret curves legible.
+    stacked = columns == 1
+    if stacked:
+        panels_in = 2 * (0.62 * style.width_in)
+        gridspec_kw = None
+        nrows, ncols = 2, 1
+    else:
+        panels_in = 0.32 * style.width_in
+        gridspec_kw = None
+        nrows, ncols = 1, 2
+    height_in = panels_in + legend_band_in
+    legend_top = panels_in / height_in  # axes fill exactly the panel region
+    fig, (ax1, ax2) = plt.subplots(
+        nrows, ncols, figsize=(style.width_in, height_in), gridspec_kw=gridspec_kw
+    )
 
     x_pos = np.arange(len(algorithms))
     simple_regret_ymax = 0.5
+    bar_hatches = ["", "///", "...", "xxx", "\\\\\\", "||"]
 
     for i, algo in enumerate(algorithms):
         stem = f"{algo}_hotpotqa_{n_samples}samples_{n_runs}runs"
@@ -87,26 +120,26 @@ def plot_hotpotqa_results(
         cumulative_mean = np.cumsum(mean_regrets) / np.arange(1, len(mean_regrets) + 1)
         cumulative_std = np.sqrt(np.cumsum(std_regrets**2)) / iterations
 
-        color = get_algorithm_color(i)
+        color, marker = algorithm_style(algo)
         ax1.plot(
             iterations,
             cumulative_mean,
             color=color,
             label=label_of(algo),
-            marker=base_markers[i % len(base_markers)],
-            markevery=max(1, len(iterations) // 8),
-            linewidth=2.0,
-            markersize=7,
+            marker=marker,
+            markevery=style.markevery(len(iterations)),
+            linewidth=style.linewidth,
+            markersize=style.markersize,
         )
         ax1.fill_between(
             iterations,
             cumulative_mean - cumulative_std,
             cumulative_mean + cumulative_std,
             color=color,
-            alpha=0.15,
+            alpha=style.band_alpha,
         )
 
-        # --- RIGHT: simple regret bar chart with individual run points ---
+        # --- RIGHT: simple regret bar chart ---
         row = df_summary.iloc[0]
         mean = row["simple_regret_mean"]
         std = row["simple_regret_std"]
@@ -117,44 +150,44 @@ def plot_hotpotqa_results(
             mean,
             yerr=std,
             color=color,
-            alpha=0.7,
-            capsize=6,
-            width=0.5,
-            error_kw={"elinewidth": 2, "ecolor": color},
-        )
-        ax2.scatter(
-            x_pos[i] + rng.uniform(-0.08, 0.08, len(raw)),
-            raw,
-            color=color,
-            zorder=5,
-            s=40,
-            edgecolors="white",
-            linewidths=0.8,
+            hatch=bar_hatches[i % len(bar_hatches)],
+            edgecolor="black",
+            linewidth=0.5,
+            capsize=style.capsize,
+            width=0.6,
+            error_kw={"elinewidth": 1.0, "ecolor": "black", "capthick": style.capthick},
         )
         simple_regret_ymax = max(simple_regret_ymax, mean + std, raw.max())
 
-    ax1.set_xlabel("Iteration", fontsize=20)
-    ax1.set_ylabel("Normalized Cumulative Regret", fontsize=15)
-    ax1.tick_params(axis="both", which="major", labelsize=15)
-    ax1.set_axisbelow(True)
-    ax1.grid(True, alpha=0.3)
-    ax1.spines["top"].set_visible(False)
-    ax1.spines["right"].set_visible(False)
+    ax1.set_xlabel("Iteration", fontweight="bold", fontsize=style.label_fontsize)
+    ax1.set_ylabel(
+        "Online Avg. Regret", fontweight="bold", fontsize=style.label_fontsize
+    )
+    style.style_axis(ax1)
 
     ax2.set_xticks(x_pos)
-    ax2.set_xticklabels([label_of(algo) for algo in algorithms], fontsize=13)
-    ax2.set_ylabel("Simple Regret", fontsize=15)
+    ax2.set_xticklabels(
+        [label_of(algo) for algo in algorithms],
+        fontsize=algo_tick_fontsize,
+        rotation=30,
+        ha="right",
+    )
+    ax2.set_ylabel("Simple Regret", fontweight="bold", fontsize=style.label_fontsize)
     ax2.set_ylim(0.5, simple_regret_ymax + 0.02)
-    ax2.tick_params(axis="both", which="major", labelsize=15)
-    ax2.set_axisbelow(True)
-    ax2.grid(True, alpha=0.3, axis="y")
-    ax2.spines["top"].set_visible(False)
-    ax2.spines["right"].set_visible(False)
+    style.style_axis(ax2, grid_axis="y")
 
     handles, labels = ax1.get_legend_handles_labels()
-    create_figure_legend(fig, handles, labels, ncol=len(algorithms))
-
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    create_figure_legend(
+        fig,
+        handles,
+        labels,
+        ncol=len(algorithms),  # single row
+        bbox_y=1.0,
+        fontsize=style.legend_fontsize,
+    )
+    plt.tight_layout(
+        rect=[0, 0, 1, legend_top], h_pad=1.0 if stacked else None, w_pad=1.0
+    )
 
     if save_fig:
         name = fig_name or f"hotpotqa_results_{n_samples}samples.pdf"
@@ -333,17 +366,14 @@ def plot_config_analysis(
 
 
 if __name__ == "__main__":
-    # Labels must match algo_label() in hotpotqa_experiment.py (file stems).
-    # IMABO/IMABO-noTPE (beta=0.8) were archived under beta_0.8/; the new
-    # IMABO-beta0.5 run lives at the top-level RESULTS_DIR.
     beta_08_dir = RESULTS_DIR / "beta_0.8"
-    algorithms = ["IMABO-beta0.5", "IMOSS-TABFM-beta0.5", "UCB-AIR", "Random"]
+    algorithms = ["IMABO-beta0.5", "IMOSS-TABFM-beta0.5", "UCB-AIR-beta0.5", "Random"]
     # dirs = {algo: beta_08_dir for algo in algorithms}
     dirs = None
     display_overrides = {
         "IMABO-beta0.5": "IMOSS-TPE",
-        "IMOSS-TABFM-beta0.5": "IMOSS-TABFM",
-        "UCB-AIR": "UCB-AIR",
+        "IMOSS-TABFM-beta0.5": "IMOSS-TabFM",
+        "UCB-AIR-beta0.5": "UCB-AIR",
     }
     n_samples = 5000
     n_runs = 5
@@ -356,4 +386,6 @@ if __name__ == "__main__":
         dirs=dirs,
         display_overrides=display_overrides,
         fig_name=f"hotpotqa_imabo_family_beta_compare_{n_samples}samples.pdf",
+        columns=1,
+        conference="aaai",
     )

@@ -72,11 +72,13 @@ def build_optimizer(
             seed=seed,
             tabfm_model=model,
             beta=BETA,
+            n_estimators=6,
         )
     elif algorithm == Algorithm.UCB_AIR:
         return UCBAIR(
             search_space=search_space,
             seed=seed,
+            beta=BETA,
         )
 
 

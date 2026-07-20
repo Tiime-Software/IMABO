@@ -12,19 +12,56 @@ from tqdm import tqdm
 
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
 from experiments.rf_tabular_bandit_experiment import (
+    BETA,
     Algorithm,
     algo_slug,
     benchmark_tag,
     build_optimizer,
 )
 from imabo.memory import config_to_key
-from imabo.optimizer import load_tabfm
+from imabo.optimizer import IMABOTabFM, load_tabfm
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite_arm_distribution"
 RESULT_DIR.mkdir(exist_ok=True)
 
 N_SHADOW = 10
 N_JOBS = 8
+# The oracle-proposal shadow probe (see _oracle_propose) always calls the real
+# oracle (bypassing the cheap MOSS exploit branch), which is expensive for
+# IMOSS-TabFM -- one TabFM fit+predict per probed iteration, no cross-
+# iteration caching possible since N_SHADOW already equals TabFM's own
+# refit_every. Probing every iteration costs ~10h/run; we only need this
+# signal at a resolution that supports the cumulative-regret figure, not a
+# per-iteration trace, so it's sampled every ORACLE_PROBE_EVERY iterations.
+ORACLE_PROBE_EVERY = 100
+
+
+def _oracle_propose(shadow: Any) -> Any:
+    """The oracle's own raw proposal, decoupled from the optimizer's current
+    explore/exploit phase.
+
+    `IMABO.suggest()` (imabo/optimizer.py) only consults the oracle --
+    uniform random for plain IMOSS, the TPE Parzen estimator for IMOSS-TPE, the
+    TabFM surrogate for IMOSS-TabFM -- while in its "explore" phase; once
+    `len(arms) >= t**beta` it switches to `suggest_existing`, a MOSS/UCB index
+    lookup over already-pulled arms (imabo/moss.py). That mixture is what the
+    *algorithm* suggests, not what the oracle itself would propose. Calling
+    the oracle path directly here, every iteration regardless of phase, is
+    what isolates "the distribution of the oracle every time it suggests an
+    arm" from the exploit-driven convergence measured previously.
+
+    Bypassing suggest() also means memory.pull_arm() -- and therefore
+    step_counter/nb_pending -- is never touched (imabo/optimizer.py:163-164),
+    so this is even safer against state leakage than the previous
+    shadow.suggest() probe.
+    """
+    if not getattr(shadow, "use_tpe", False):
+        return shadow.generate_random_config()
+    state = shadow.memory.get_current_state()
+    rewarded_arms = shadow.get_rewarded_arms(state)
+    nb_pending_total = sum(s.nb_pending for s in state.arms.values())
+    nb_rewarded_total = sum(s.nb_rewarded for s in state.arms.values())
+    return shadow.suggest_new(state, rewarded_arms, nb_pending_total, nb_rewarded_total)
 
 
 def _shadow_copy(opt: Any) -> Any:
@@ -53,34 +90,60 @@ def run_single_experiment(
     seed: int = 42,
     tabfm_model: Any = None,
     n_shadow: int = N_SHADOW,
+    oracle_probe_every: int = ORACLE_PROBE_EVERY,
 ) -> dict:
-    """Run one seed, recording at every iteration the mean/std of the true
-    reward of `n_shadow` independent draws from the optimizer's suggest()
-    distribution at that state (see _shadow_copy), alongside the same
-    real-trajectory fields as rf_tabular_bandit_experiment.run_single_experiment.
+    """Run one seed, recording every `oracle_probe_every` iterations the
+    mean/std of the true reward of `n_shadow` independent draws from the
+    oracle's raw proposal at that state (see _shadow_copy, _oracle_propose),
+    alongside the same real-trajectory fields as
+    rf_tabular_bandit_experiment.run_single_experiment.
     """
-    opt = build_optimizer(algorithm, bench.get_search_space(), seed, tabfm_model)
+    tabfm_candidate_mse_iterations: list[int] = []
+    tabfm_candidate_mse: list[float] = []
+
+    def _log_candidate_mse(candidates, mean_preds, std_preds) -> None:
+        true_vals = np.array([bench.mean_reward(c) for c in candidates])
+        tabfm_candidate_mse_iterations.append(i)
+        tabfm_candidate_mse.append(float(np.mean((mean_preds - true_vals) ** 2)))
+
+    if algorithm == Algorithm.IMOSS_TABFM:
+        opt = IMABOTabFM(
+            search_space=bench.get_search_space(),
+            seed=seed,
+            tabfm_model=tabfm_model,
+            beta=BETA,
+            suggest_method="max",
+            on_candidates_scored=_log_candidate_mse,
+            n_estimators=6,
+        )
+    else:
+        opt = build_optimizer(algorithm, bench.get_search_space(), seed, tabfm_model)
     param_names = sorted(bench.get_search_space().keys())
+
+    # UCB-AIR (experiments/baselines/ucb_air.py) has no oracle/exploit split --
+    # it's kept in this experiment for the shared cumulative-regret comparison
+    # only, so it's exempt from the oracle-proposal shadow probe below.
+    has_oracle = hasattr(opt, "generate_random_config")
 
     regrets = []
     simple_regret_trace = []
+    shadow_probe_iterations = []
     shadow_reward_mean = []
     shadow_reward_std = []
     suggestion_counts: Counter = Counter()
-    for _ in tqdm(range(n_iterations), desc=algorithm.value, leave=False):
-        # `shadow.suggest()` with no `observe()` in between is safe for our
-        # switch_strategy="beta" optimizers: moss_anytime only reads
-        # nb_pending in "delayed" mode, so the pending-count buildup across
-        # these n_shadow calls never reaches the scoring formula. It DOES
-        # bump the shared step_counter each call (see Memory.pull_arm), so by
-        # the last of the n_shadow draws the shadow's internal t is inflated
-        # by up to n_shadow-1 -- negligible against t once past the first
-        # ~100 iterations of a 5000-iteration budget, and discarded with the
-        # copy either way.
-        shadow = _shadow_copy(opt)
-        shadow_rewards = [bench.mean_reward(shadow.suggest()) for _ in range(n_shadow)]
-        shadow_reward_mean.append(float(np.mean(shadow_rewards)))
-        shadow_reward_std.append(float(np.std(shadow_rewards)))
+    for i in tqdm(range(n_iterations), desc=algorithm.value, leave=False):
+        if has_oracle and i % oracle_probe_every == 0:
+            # _oracle_propose() never calls memory.pull_arm(), so unlike the
+            # `shadow.suggest()` probe this used to be, it leaves step_counter
+            # and nb_pending completely untouched -- no state-leakage caveat
+            # needed.
+            shadow = _shadow_copy(opt)
+            shadow_rewards = [
+                bench.mean_reward(_oracle_propose(shadow)) for _ in range(n_shadow)
+            ]
+            shadow_probe_iterations.append(i)
+            shadow_reward_mean.append(float(np.mean(shadow_rewards)))
+            shadow_reward_std.append(float(np.std(shadow_rewards)))
 
         x = opt.suggest()
         y = bench(x, noise=True)
@@ -104,8 +167,17 @@ def run_single_experiment(
         "regrets": regrets,
         "simple_regret_trace": simple_regret_trace,
         "simple_regrets": simple_regret,
-        "shadow_reward_mean": shadow_reward_mean,
-        "shadow_reward_std": shadow_reward_std,
+        "shadow_probe_iterations": shadow_probe_iterations if has_oracle else None,
+        "shadow_reward_mean": shadow_reward_mean if has_oracle else None,
+        "shadow_reward_std": shadow_reward_std if has_oracle else None,
+        "tabfm_candidate_mse_iterations": (
+            tabfm_candidate_mse_iterations
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
+        "tabfm_candidate_mse": (
+            tabfm_candidate_mse if algorithm == Algorithm.IMOSS_TABFM else None
+        ),
         "best_config": best,
         "best_reward": best_reward,
         "best_config_suggestions": (
@@ -199,9 +271,9 @@ if __name__ == "__main__":
     # Same three benchmarks as rf_tabular_bandit_experiment.py, spanning
     # reward-noise regimes: segment (clean), credit-g (noisy), numerai28.6 (hard).
     bm_ids = [146822, 31, 167120]
-    # The IMOSS proposal-oracle family only -- this experiment is about
-    # contrasting how each oracle's live suggestion distribution evolves,
-    # not about the IMOSS-vs-UCB-AIR framework comparison.
+    # The IMOSS proposal-oracle family for the oracle-distribution shadow
+    # probe, plus UCB-AIR kept only for the shared cumulative-regret grid
+    # (run_single_experiment skips the shadow probe for it -- see has_oracle).
     algorithms = [
         Algorithm.IMOSS,
         Algorithm.IMOSS_TPE,

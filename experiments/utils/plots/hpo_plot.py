@@ -10,10 +10,12 @@ from pathlib import Path
 from experiments.hpo_experiment import BETA
 from experiments.utils.plots.plot_configs import (
     adaptive_label_fontsize,
+    algorithm_style,
     confidence_ellipse,
     create_figure_legend,
     display_name,
     get_algorithm_color,
+    paper_style,
     save_figure,
     set_research_style,
     RESEARCH_COLORS,
@@ -572,12 +574,22 @@ def plot_combined_regrets(
     plt.show()
 
 
+# Per-benchmark-row height (in) for plot_combined_regrets_grid, generated
+# directly at its final print width (see plot_configs.paper_figure_width_in)
+# -- independent of width, like the old figsize's fixed "3.0 * n_bench",
+# just recalibrated for direct print-size generation instead of
+# generate-oversized-then-shrink.
+_COMBINED_REGRETS_ROW_HEIGHT_IN = 1.5
+
+
 def plot_combined_regrets_grid(
     benchmarks=("lr", "svm"),
     n_iterations=10000,
     save_fig=False,
     exp_type="hpo",
     beta=BETA,
+    columns=1,
+    conference="aaai",
 ):
     """
     Plot cumulative regret and simple regret for multiple benchmarks in a single
@@ -586,19 +598,54 @@ def plot_combined_regrets_grid(
     (plot_combined_regrets) so that e.g. LR and SVM results fit in one compact
     figure instead of two.
 
+    Sized via paper_style(conference, columns) for a `columns`-wide (1 =
+    narrow single text column, 2 = full text width) placement at (close to)
+    100% scale -- generated directly at that final print size (not
+    oversized-then-shrunk), so all fonts/line widths/markers come from the
+    PaperStyle bundle (plain print pt) rather than adaptive ones. Per-algorithm
+    colors and markers come from the shared canonical registry
+    (plot_configs.algorithm_style), so a method looks the same here as in every
+    other figure.
+
     Args:
         benchmarks: Iterable of benchmark names (e.g. ('lr', 'svm'))
         n_iterations: Number of iterations for the cumulative-regret column
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
+        columns: 1 (fits a single column, the default -- this figure's 2
+            plain line/errorbar panels per row read fine at that width) or 2
+            (spans both columns, a LaTeX `figure*`).
+        conference: Which conference's column widths to use (default "aaai").
     """
     n_bench = len(benchmarks)
-    fig, axes = plt.subplots(n_bench, 2, figsize=(14, 3.0 * n_bench))
+    style = paper_style(conference=conference, columns=columns)
+
+    # Peek at the first benchmark's algorithm count so the figure can be
+    # sized to fit the legend from the start (see plot_regret_and_oracle_grid
+    # for the same pattern) -- re-read inside the main loop below, but this
+    # is cheap enough not to matter for a plotting script.
+    first_iters_csv = (
+        RESULTS_DIR / f"{benchmarks[0]}_{exp_type}_beta_{beta}_iterations.csv"
+    )
+    n_algorithms = pd.read_csv(first_iters_csv)["algorithm"].nunique()
+    n_legend_rows = style.n_legend_rows(n_algorithms)
+
+    # sharex="col": both rows of a column share one x-axis, so only the bottom
+    # row needs tick numbers -- dropping the top row's (below) removes the band
+    # of whitespace that otherwise sits between the two rows.
+    fig, axes = plt.subplots(
+        n_bench,
+        2,
+        figsize=(
+            style.width_in,
+            _COMBINED_REGRETS_ROW_HEIGHT_IN * n_bench + 0.22 * (n_legend_rows - 1),
+        ),
+        sharex="col",
+    )
     if n_bench == 1:
         axes = axes.reshape(1, 2)
 
-    base_markers = ["o", "^", "s", "D", "v", "p"]
     legend_handles, legend_labels = None, None
 
     for row, benchmark in enumerate(benchmarks):
@@ -620,14 +667,13 @@ def plot_combined_regrets_grid(
         ax_right = axes[row, 1]
 
         # --- LEFT COL: Cumulative Regret over Iterations ---
-        for i, algo in enumerate(algorithms):
+        for algo in algorithms:
             algo_data = df_iterations[df_iterations["algorithm"] == algo]
             iterations = algo_data["iteration"].values
             mean_regrets = algo_data["regret_mean"].values
             cumulative_mean = np.cumsum(mean_regrets)
 
-            color = get_algorithm_color(i)
-            marker = base_markers[i % len(base_markers)]
+            color, marker = algorithm_style(algo)
 
             ax_left.plot(
                 iterations,
@@ -635,26 +681,26 @@ def plot_combined_regrets_grid(
                 color=color,
                 label=display_name(algo),
                 marker=marker,
-                markevery=len(iterations) // 8,
-                linewidth=1.8,
-                markersize=6,
+                markevery=style.markevery(len(iterations)),
+                linewidth=style.linewidth,
+                markersize=style.markersize,
             )
 
         ax_left.set_ylabel(
-            f"{benchmark.upper()}\nCumulative Regret",
+            f"{benchmark.upper()}\nCum. Regret",
             fontweight="bold",
-            fontsize=20,
+            fontsize=style.label_fontsize,
         )
         if row == n_bench - 1:
-            ax_left.set_xlabel("Iteration", fontweight="bold", fontsize=20)
-        ax_left.tick_params(axis="both", which="major", labelsize=15)
-        ax_left.set_axisbelow(True)
-        ax_left.grid(True, alpha=0.3)
-        ax_left.spines["top"].set_visible(False)
-        ax_left.spines["right"].set_visible(False)
+            ax_left.set_xlabel(
+                "Iteration", fontweight="bold", fontsize=style.label_fontsize
+            )
+        style.style_axis(ax_left)
+        if row != n_bench - 1:  # only the bottom row shows the shared x ticks
+            ax_left.tick_params(labelbottom=False)
 
         # --- RIGHT COL: Simple Regret vs Evaluation Budget ---
-        for i, algo in enumerate(algorithms):
+        for algo in algorithms:
             algo_data = df_summary[df_summary["algorithm"] == algo].sort_values(
                 "n_iterations"
             )
@@ -662,8 +708,7 @@ def plot_combined_regrets_grid(
             simple_regret_mean = algo_data["simple_regret_mean"].values
             simple_regret_std = algo_data["simple_regret_std"].values
 
-            color = get_algorithm_color(i)
-            marker = base_markers[i % len(base_markers)]
+            color, marker = algorithm_style(algo)
 
             ax_right.errorbar(
                 n_iters,
@@ -672,41 +717,51 @@ def plot_combined_regrets_grid(
                 color=color,
                 label=display_name(algo),
                 marker=marker,
-                markersize=6,
-                linewidth=1.8,
-                capsize=4,
-                capthick=1.5,
+                markersize=style.markersize,
+                linewidth=style.linewidth,
+                capsize=style.capsize,
+                capthick=style.capthick,
             )
 
         ax_right.set_ylabel(
             "Simple Regret",
             fontweight="bold",
-            fontsize=20,
+            fontsize=style.label_fontsize,
         )
         if row == n_bench - 1:
             ax_right.set_xlabel(
                 "Evaluation Budget",
                 fontweight="bold",
-                fontsize=20,
+                fontsize=style.label_fontsize,
             )
         ax_right.set_xticks(n_iters)
-        ax_right.tick_params(axis="both", which="major", labelsize=15)
-        ax_right.set_axisbelow(True)
-        ax_right.grid(True, alpha=0.3)
-        ax_right.spines["top"].set_visible(False)
-        ax_right.spines["right"].set_visible(False)
+        ax_right.set_xticklabels(n_iters, rotation=30, ha="right")
+        style.style_axis(ax_right)
+        if row != n_bench - 1:  # only the bottom row shows the shared x ticks
+            ax_right.tick_params(labelbottom=False)
 
         if legend_handles is None:
             legend_handles, legend_labels = ax_left.get_legend_handles_labels()
 
     # bbox_y/rect tightened vs. the shared defaults: this figure is short
-    # (3in per row) and wide, so create_figure_legend's default bbox_y=1.08
-    # leaves a disproportionately large absolute gap above the top row.
-    create_figure_legend(
-        fig, legend_handles, legend_labels, ncol=len(legend_labels), bbox_y=1.02
+    # and wide, so create_figure_legend's default bbox_y=1.08 leaves a
+    # disproportionately large absolute gap above the top row. Wrapping the
+    # legend at columns=1 (see PaperStyle.legend_ncol) keeps its rendered
+    # width from exceeding the target print width -- without that, a 1-row
+    # legend for 4+ algorithms is wider than the target width, and
+    # bbox_inches="tight" (below) would grow the saved PDF to fit it,
+    # silently shrinking every font when later embedded at width=\linewidth.
+    style.legend(
+        fig,
+        legend_handles,
+        legend_labels,
+        n_labels=n_algorithms,
+        bbox_y=1.0 if n_legend_rows == 1 else 1.02,
     )
 
-    plt.tight_layout(rect=[0, 0, 1, 0.97], h_pad=1.2, w_pad=4.0)
+    plt.tight_layout(
+        rect=[0, 0, 1, 0.95 if n_legend_rows == 1 else 0.93], h_pad=0.2, w_pad=1.5
+    )
 
     if save_fig:
         bench_tag = "_".join(benchmarks)
@@ -723,5 +778,11 @@ def plot_combined_regrets_grid(
 if __name__ == "__main__":
     print("Generating combined regrets grid plot for LR and SVM...")
     plot_combined_regrets_grid(
-        benchmarks=("lr", "svm"), n_iterations=10000, save_fig=True, exp_type="hpo"
+        benchmarks=("lr", "svm"),
+        n_iterations=10000,
+        save_fig=True,
+        exp_type="hpo",
+        beta=BETA,
+        conference="aaai",
+        columns=2,
     )

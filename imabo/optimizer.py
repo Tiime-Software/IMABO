@@ -602,6 +602,10 @@ class IMABOTabFM(IMABO):
         model_type: str = "regression",
         tabfm_model: Any | None = None,
         tabfm_kwargs: dict[str, Any] | None = None,
+        suggest_method: Literal["ucb", "max"] = "ucb",
+        on_candidates_scored: (
+            Callable[[list[ArmConfig], np.ndarray, np.ndarray], None] | None
+        ) = None,
     ):
         """Initialize IMABOTabFM.
 
@@ -642,6 +646,17 @@ class IMABOTabFM(IMABO):
                 loading via :func:`load_tabfm`.
             tabfm_kwargs: Extra keyword arguments forwarded to
                 ``TabFMRegressor``.
+            suggest_method: "ucb" scores candidates as mean + kappa * std;
+                "max" scores them as the ensemble max (ignores kappa).
+            on_candidates_scored: Optional diagnostics hook, called with
+                (candidates, mean_preds, std_preds) every time TabFM actually
+                re-fits and re-scores a fresh candidate pool (i.e. real
+                fit+predict calls, not calls served from the cached
+                `_pending_candidates`). `mean_preds`/`std_preds` are the
+                per-candidate mean/std of the raw ``(n_estimators,
+                n_candidates)`` ensemble output. Has no effect on the
+                optimizer's behavior -- e.g. used by experiment scripts to
+                log the candidate pool's predicted-vs-true MSE over time.
         """
         super().__init__(
             search_space=search_space,
@@ -668,6 +683,8 @@ class IMABOTabFM(IMABO):
             tabfm_model if tabfm_model is not None else load_tabfm(model_type)
         )
         self._pending_candidates: list[ArmConfig] = []
+        self.suggest_method = suggest_method
+        self.on_candidates_scored = on_candidates_scored
 
     def _configs_to_frame(self, configs: list[ArmConfig]) -> Any:
         """Build a DataFrame from configs, tagging categorical columns."""
@@ -723,15 +740,16 @@ class IMABOTabFM(IMABO):
         candidates = [self.generate_random_config() for _ in range(self.n_candidates)]
         X_candidates = self._configs_to_frame(candidates)
 
-        try:
-            preds = np.asarray(surrogate._predict_internal(X_candidates))
-            mean = preds.mean(axis=0)
-            std = preds.std(axis=0)
+        preds = np.asarray(surrogate._predict_internal(X_candidates))
+        mean = preds.mean(axis=0)
+        std = preds.std(axis=0)
+        if self.suggest_method == "ucb":
             scores = mean + self.kappa * std
-        except Exception:
-            # `_predict_internal` is a private API; fall back to a plain
-            # (uncertainty-free) mean prediction if it ever breaks.
-            scores = np.asarray(surrogate.predict(X_candidates))
+        elif self.suggest_method == "max":
+            scores = preds.max(axis=0)
+
+        if self.on_candidates_scored is not None:
+            self.on_candidates_scored(candidates, mean, std)
 
         ranked_idx = np.argsort(scores)[::-1]
         ranked = [candidates[i] for i in ranked_idx[: self.refit_every]]
