@@ -870,13 +870,21 @@ def plot_tabfm_calibration_grid(
 
 
 def _load_pull_counts(
-    benchmark: str, n_iterations: int | None
+    benchmark: str, n_iterations: int | None, run: int | str | None = None
 ) -> tuple[dict[str, tuple[list[str], dict[tuple, float]]], int]:
-    """Read the real-trajectory `suggestion_counts` from every per-run JSON,
-    summing pull counts per config across seeds.
+    """Read the real-trajectory `suggestion_counts` from the per-run JSONs.
 
-    Returns dict[label] -> (param_names, {config_key_tuple: total_pulls}). The
-    counts are over every opt.suggest() (explore + exploit), i.e. the actual
+    `run`:
+      - int k      -> use only seed k (peaked per-seed footprint).
+      - "all"      -> average pull counts per config over all seeds.
+      - None       -> sum pull counts per config over all seeds.
+    Pooling seeds ("all"/None) smears out the per-seed concentration (each
+    seed's Bernoulli noise converges it to a *different* arm), so a single
+    seed shows the true peaked footprint. "all" and None differ only by the
+    /n_seeds factor -- identical once marker area is normalized per panel.
+
+    Returns dict[label] -> (param_names, {config_key_tuple: pulls}). Counts
+    are over every opt.suggest() (explore + exploit), i.e. the actual
     footprint of the algorithm on the search space -- see
     rf_arm_distribution_experiment.run_single_experiment.
     """
@@ -897,9 +905,12 @@ def _load_pull_counts(
 
     counts_by_algo: dict[str, Counter] = defaultdict(Counter)
     pnames_by_algo: dict[str, list[str]] = {}
+    seeds_by_algo: dict[str, set] = defaultdict(set)
     for path in sorted(DATA_DIR.glob(f"{benchmark}_*_{n_iterations}iters_run*.json")):
         match = run_pattern.match(path.name)
         if not match:
+            continue
+        if isinstance(run, int) and int(match.group(3)) != run:
             continue
         slug = match.group(1)
         with open(path) as f:
@@ -910,12 +921,18 @@ def _load_pull_counts(
         for key_list, count in data["suggestion_counts"]:
             counts_by_algo[label][tuple(key_list)] += count
         pnames_by_algo[label] = data["param_names"]
+        seeds_by_algo[label].add(int(match.group(3)))
 
     if not counts_by_algo:
         raise FileNotFoundError(
             f"No run checkpoints with suggestion_counts for T={n_iterations} in "
             f"{DATA_DIR} -- run experiments/rf_arm_distribution_experiment.py first."
         )
+    if run == "all":  # average per config over the seeds that contributed
+        for label, counts in counts_by_algo.items():
+            n_seeds = max(1, len(seeds_by_algo[label]))
+            for key in counts:
+                counts[key] /= n_seeds
     return (
         {
             label: (pnames_by_algo[label], dict(counts_by_algo[label]))
@@ -931,8 +948,9 @@ def plot_arm_pulls_landscape_grid(
     save_fig=False,
     algorithms=("IMOSS-TPE", "IMOSS-TabFM"),
     max_marker=900,
-    min_marker=25,
+    min_marker=0,
     agg="mean",
+    run=0,
 ):
     """Where each oracle spends its pulls, overlaid on the reward landscape.
 
@@ -947,11 +965,16 @@ def plot_arm_pulls_landscape_grid(
         arm exists there (unambiguous for the pull-overlay reading), but it
         flattens structure (credit-g's corner looks like a plain depth ridge).
     Overlay: each visited config as a filled crimson circle at its
-    (max_depth, max_features) cell, marker area scaling with total pulls
-    landing in that cell (real-trajectory suggestion_counts, summed over
-    seeds; explore + exploit) between `min_marker` (a floor so single-pull
-    cells stay visible) and `max_marker`. Shows the footprint difference --
-    does TabFM concentrate on the bright region more tightly than TPE.
+    (max_depth, max_features) cell, marker area strictly proportional to
+    total pulls landing in that cell (real-trajectory suggestion_counts,
+    summed over seeds; explore + exploit), scaled to `max_marker`. With the
+    default `min_marker=0` the area is a true proportion, so lightly-pulled
+    cells (opened once during exploration, then abandoned) shrink to nearly
+    nothing and only genuine concentration shows -- this avoids faking broad
+    coverage, since the explore phase is forced to open ~sqrt(T) distinct
+    arms regardless of the oracle. Raise `min_marker` only if you want a
+    visibility floor. Shows the footprint difference -- does TabFM
+    concentrate on the bright region more tightly than TPE.
     """
     import pandas as pd
 
@@ -984,7 +1007,7 @@ def plot_arm_pulls_landscape_grid(
         pivot = _reward_grid(bm_id)  # index=max_depth, cols=max_features (sorted)
         depth_vals = np.array(pivot.index, dtype=float)
         feat_vals = np.array(pivot.columns, dtype=float)
-        counts_by_algo, _ = _load_pull_counts(benchmark, n_iterations)
+        counts_by_algo, _ = _load_pull_counts(benchmark, n_iterations, run=run)
 
         for r, algo in enumerate(algorithms):
             ax = axes[r][c]
@@ -1038,12 +1061,13 @@ def plot_arm_pulls_landscape_grid(
             cbar.set_label("val_acc", fontsize=12)
             cbar.ax.tick_params(labelsize=11)
 
+    seed_note = f"seed {run}" if run is not None else "summed over seeds"
     fig.text(
         0.5,
         0.005,
         f"Background: {agg} val_acc per (max_depth, max_features) cell. "
-        "Marker area scales with total pulls in that cell "
-        "(summed over seeds; explore + exploit; small floor for visibility)",
+        f"Marker area strictly proportional to total pulls in that cell "
+        f"({seed_note}; explore + exploit)",
         ha="center",
         fontsize=13,
         style="italic",
@@ -1052,7 +1076,186 @@ def plot_arm_pulls_landscape_grid(
 
     if save_fig:
         tag = "_".join(benchmarks)
-        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_arm_pulls_landscape_grid.pdf"
+        suffix = f"_run{run}" if run is not None else ""
+        out_path = (
+            RESULTS_DIR / "paper_plots" / f"{tag}_arm_pulls_landscape_grid{suffix}.pdf"
+        )
+        save_figure(out_path, bbox_inches="tight")
+
+    plt.show()
+
+
+def _candidate_cell_mse_grid(benchmark, n_iterations, run=None, agg="mean"):
+    """Per (max_depth, max_features) cell MSE of TabFM's candidate-pool
+    predictions vs true reward, from tabfm_candidate_configs/predicted/true
+    (only IMOSS-TabFM logs these). Reindexed to the benchmark's full depth x
+    features grid (NaN where no candidate landed). `run=k` (int) uses seed k
+    only; `run=None` or "all" pools every seed (smoother estimate). `agg` controls how
+    per-cell squared errors are combined -- "mean" (default) for the typical
+    error in a cell, "max" to instead surface the single worst prediction
+    per cell (any pandas groupby-agg string works, e.g. "median").
+
+    Returns (pivot DataFrame indexed by max_depth, columns max_features), n_iterations.
+    """
+    import pandas as pd
+
+    from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
+
+    run_pattern = re.compile(rf"{re.escape(benchmark)}_(.+)_(\d+)iters_run(\d+)\.json$")
+    if n_iterations is None:
+        available = {
+            int(m.group(2))
+            for p in DATA_DIR.glob(f"{benchmark}_*_*iters_run*.json")
+            if (m := run_pattern.match(p.name))
+        }
+        if not available:
+            raise FileNotFoundError(
+                f"No run checkpoints found in {DATA_DIR} -- run "
+                f"experiments/rf_arm_distribution_experiment.py first."
+            )
+        n_iterations = max(available)
+
+    rows = []
+    for path in sorted(DATA_DIR.glob(f"{benchmark}_*_{n_iterations}iters_run*.json")):
+        match = run_pattern.match(path.name)
+        # int -> that seed only; None/"all" -> pool every seed.
+        if not match or (isinstance(run, int) and int(match.group(3)) != run):
+            continue
+        with open(path) as f:
+            data = json.load(f)
+        if not data.get("tabfm_candidate_configs"):
+            continue
+        pn = data["param_names"]
+        di, fi = pn.index("max_depth"), pn.index("max_features")
+        for cfgs, preds, trues in zip(
+            data["tabfm_candidate_configs"],
+            data["tabfm_candidate_predicted_rewards"],
+            data["tabfm_candidate_true_rewards"],
+        ):
+            for cfg, p, t in zip(cfgs, preds, trues):
+                rows.append((cfg[di], cfg[fi], (p - t) ** 2))
+
+    if not rows:
+        raise FileNotFoundError(
+            f"No run checkpoints with tabfm_candidate_configs for T={n_iterations} "
+            f"in {DATA_DIR} -- rerun experiments/rf_arm_distribution_experiment.py "
+            f"for IMOSS-TabFM (this field was added later)."
+        )
+
+    df = pd.DataFrame(rows, columns=["max_depth", "max_features", "se"])
+    pivot = (
+        df.groupby(["max_depth", "max_features"]).se.agg(agg).unstack("max_features")
+    )
+    bench = RFTabularFiniteBenchmark(bm_id=int(benchmark[2:]))
+    pivot = pivot.reindex(
+        index=sorted(bench.axes["max_depth"]),
+        columns=sorted(bench.axes["max_features"]),
+    )
+    return pivot, n_iterations
+
+
+def plot_tabfm_mse_landscape_grid(
+    benchmarks=("rf146822", "rf31", "rf167120"),
+    n_iterations=None,
+    save_fig=False,
+    max_marker=900,
+    min_marker=0,
+    run="all",
+    agg="mean",
+):
+    """TabFM surrogate error over the (max_depth, max_features) landscape, with
+    its pull footprint overlaid -- 'where is TabFM bad, and does it pull there?'
+
+    Background = per-cell MSE of TabFM's candidate predictions vs true reward
+    (see _candidate_cell_mse_grid; bright = high error) -- `agg="mean"`
+    (default) shows the typical error per cell, `agg="max"` the single worst
+    prediction. Overlay = crimson pull markers (area strictly proportional to
+    pulls). `run` selects BOTH the MSE background and the pull footprint: an
+    int for a single seed (peaked footprint + that seed's error map, noisier
+    ~100 candidates/cell), "all" to average pulls / pool the error map over
+    seeds (smoother, ~1000 candidates/cell), or None to sum. IMOSS-TabFM only.
+    """
+    n = len(benchmarks)
+    fig, axes = plt.subplots(1, n, figsize=(6 * n, 5), squeeze=False)
+    axes = axes[0]
+
+    for c, (ax, benchmark) in enumerate(zip(axes, benchmarks)):
+        pivot, _ = _candidate_cell_mse_grid(benchmark, n_iterations, run=run, agg=agg)
+        depth_vals = np.array(pivot.index, dtype=float)
+        feat_vals = np.array(pivot.columns, dtype=float)
+        cmap = plt.get_cmap("magma").copy()
+        cmap.set_bad("lightgray")
+        im = ax.imshow(
+            np.ma.masked_invalid(pivot.values),
+            aspect="auto",
+            origin="lower",
+            cmap=cmap,
+        )
+
+        counts_by_algo, _ = _load_pull_counts(benchmark, n_iterations, run=run)
+        if "IMOSS-TabFM" in counts_by_algo:
+            pnames, counts = counts_by_algo["IMOSS-TabFM"]
+            di, fi = pnames.index("max_depth"), pnames.index("max_features")
+            cell: dict[tuple[int, int], float] = defaultdict(float)
+            for key, cnt in counts.items():
+                yi = int(np.argmin(np.abs(depth_vals - key[di])))
+                xi = int(np.argmin(np.abs(feat_vals - key[fi])))
+                cell[(yi, xi)] += cnt
+            if cell:
+                maxc = max(cell.values())
+                xs = [xi for (_, xi) in cell]
+                ys = [yi for (yi, _) in cell]
+                sizes = [
+                    min_marker + (max_marker - min_marker) * cell[(yi, xi)] / maxc
+                    for yi, xi in cell
+                ]
+                ax.scatter(
+                    xs,
+                    ys,
+                    s=sizes,
+                    c="crimson",
+                    alpha=0.6,
+                    edgecolors="white",
+                    linewidths=1.0,
+                )
+
+        ax.set_xticks(np.arange(pivot.shape[1]))
+        ax.set_xticklabels(
+            [f"{v:.2g}" for v in pivot.columns], rotation=45, ha="right", fontsize=14
+        )
+        ax.set_yticks(np.arange(pivot.shape[0]))
+        ax.set_yticklabels([f"{int(v)}" for v in pivot.index], fontsize=14)
+        ax.set_title(_bench_title(benchmark), fontweight="bold", fontsize=20, pad=8)
+        ax.set_xlabel("max_features", fontweight="bold", fontsize=16)
+        if c == 0:
+            ax.set_ylabel("IMOSS-TabFM\nmax_depth", fontweight="bold", fontsize=16)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label(f"TabFM {agg} MSE", fontsize=12)
+        cbar.ax.tick_params(labelsize=11)
+
+    seed_note = (
+        "averaged over seeds"
+        if run == "all"
+        else ("summed over seeds" if run is None else f"seed {run}")
+    )
+    fig.text(
+        0.5,
+        0.005,
+        f"Background: TabFM candidate-prediction {agg} MSE per (max_depth, max_features) "
+        f"cell (bright = worse). Crimson markers = pulls, area proportional to pulls. "
+        f"Both {seed_note}.",
+        ha="center",
+        fontsize=12,
+        style="italic",
+    )
+    plt.tight_layout(rect=[0, 0.03, 1, 1])
+
+    if save_fig:
+        tag = "_".join(benchmarks)
+        suffix = f"_run{run}" if run is not None else ""
+        out_path = (
+            RESULTS_DIR / "paper_plots" / f"{tag}_tabfm_mse_landscape_grid{suffix}.pdf"
+        )
         save_figure(out_path, bbox_inches="tight")
 
     plt.show()
@@ -1124,8 +1327,13 @@ def plot_arm_pulls_embedding_grid(
                 order = pulled[np.argsort(pull[pulled])]  # big markers on top
                 sizes = min_marker + (max_marker - min_marker) * pull[order] / maxp
                 ax.scatter(
-                    emb[order, 0], emb[order, 1], s=sizes, c="crimson",
-                    alpha=0.6, edgecolors="white", linewidths=0.8,
+                    emb[order, 0],
+                    emb[order, 1],
+                    s=sizes,
+                    c="crimson",
+                    alpha=0.6,
+                    edgecolors="white",
+                    linewidths=0.8,
                 )
 
             if r == 0:
@@ -1144,11 +1352,14 @@ def plot_arm_pulls_embedding_grid(
             cbar.ax.tick_params(labelsize=11)
 
     fig.text(
-        0.5, 0.005,
+        0.5,
+        0.005,
         "Background: true-reward field over the 2D PCA embedding of the 4 "
         "hyperparameters; crimson markers = pulled arms, area scales with total "
         "pulls (summed over seeds; explore + exploit)",
-        ha="center", fontsize=13, style="italic",
+        ha="center",
+        fontsize=13,
+        style="italic",
     )
     plt.tight_layout(rect=[0, 0.02, 1, 1])
 
@@ -1241,12 +1452,22 @@ def plot_arm_pulls_parallel_coords_grid(
             for xj in range(len(params)):
                 ax.axvline(xj, color="0.75", linewidth=0.8, zorder=0)
                 ax.text(
-                    xj, -0.03, f"{pmin[params[xj]]:.2g}", ha="center", va="top",
-                    fontsize=8, color="0.4",
+                    xj,
+                    -0.03,
+                    f"{pmin[params[xj]]:.2g}",
+                    ha="center",
+                    va="top",
+                    fontsize=8,
+                    color="0.4",
                 )
                 ax.text(
-                    xj, 1.03, f"{pmax[params[xj]]:.2g}", ha="center", va="bottom",
-                    fontsize=8, color="0.4",
+                    xj,
+                    1.03,
+                    f"{pmax[params[xj]]:.2g}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    color="0.4",
                 )
             ax.set_xlim(-0.3, len(params) - 0.7)
             ax.set_ylim(-0.08, 1.08)
@@ -1270,17 +1491,22 @@ def plot_arm_pulls_parallel_coords_grid(
             cbar.ax.tick_params(labelsize=10)
 
     fig.text(
-        0.5, 0.005,
+        0.5,
+        0.005,
         "Parallel coordinates over the 4 hyperparameters (each normalized to "
         "its own range); each line = a pulled arm, color = true reward, "
         "opacity/width scale with total pulls (summed over seeds; explore + exploit)",
-        ha="center", fontsize=12, style="italic",
+        ha="center",
+        fontsize=12,
+        style="italic",
     )
     plt.tight_layout(rect=[0, 0.02, 1, 1])
 
     if save_fig:
         tag = "_".join(benchmarks)
-        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_arm_pulls_parallel_coords_grid.pdf"
+        out_path = (
+            RESULTS_DIR / "paper_plots" / f"{tag}_arm_pulls_parallel_coords_grid.pdf"
+        )
         save_figure(out_path, bbox_inches="tight")
 
     plt.show()
@@ -1316,23 +1542,42 @@ def plot_cumulative_regret_gap(
         iters = np.arange(1, len(gap) + 1)
         color = get_algorithm_color(i)
         ax.plot(iters, gap, color=color, linewidth=2.5, label=_bench_title(benchmark))
-        ax.fill_between(iters, 0, gap, where=gap >= 0, color=color, alpha=0.10, linewidth=0)
-        ax.fill_between(iters, 0, gap, where=gap < 0, color=color, alpha=0.10, linewidth=0)
+        ax.fill_between(
+            iters, 0, gap, where=gap >= 0, color=color, alpha=0.10, linewidth=0
+        )
+        ax.fill_between(
+            iters, 0, gap, where=gap < 0, color=color, alpha=0.10, linewidth=0
+        )
 
     ax.axhline(0, color="black", linewidth=1.0, linestyle="--", alpha=0.6)
     ax.set_xlabel("Iteration", fontweight="bold", fontsize=16)
     ax.set_ylabel(
         f"Cumulative regret gap\n({reference} − {compared})",
-        fontweight="bold", fontsize=15,
+        fontweight="bold",
+        fontsize=15,
     )
     # Which side is which, annotated in axes-fraction coords.
     ax.text(
-        0.015, 0.97, f"↑ {compared} better", transform=ax.transAxes,
-        ha="left", va="top", fontsize=12, fontweight="bold", color="0.3",
+        0.015,
+        0.97,
+        f"↑ {compared} better",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=12,
+        fontweight="bold",
+        color="0.3",
     )
     ax.text(
-        0.015, 0.03, f"↓ {reference} better", transform=ax.transAxes,
-        ha="left", va="bottom", fontsize=12, fontweight="bold", color="0.3",
+        0.015,
+        0.03,
+        f"↓ {reference} better",
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=12,
+        fontweight="bold",
+        color="0.3",
     )
     ax.tick_params(axis="both", which="major", labelsize=13)
     ax.grid(True, alpha=0.3)
@@ -1550,45 +1795,58 @@ if __name__ == "__main__":
         save_fig=True,
     )
 
-    print("Generating TabFM suggested-config MSE grid...")
-    plot_tabfm_suggestion_error_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
-    )
+    # print("Generating TabFM suggested-config MSE grid...")
+    # plot_tabfm_suggestion_error_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    # )
 
-    print("Generating TabFM candidate-pool MSE grid...")
-    plot_tabfm_candidate_mse_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
-    )
+    # print("Generating TabFM candidate-pool MSE grid...")
+    # plot_tabfm_candidate_mse_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    # )
 
-    print("Generating TabFM top-10% candidate MSE grids (by true, by predicted)...")
-    plot_tabfm_candidate_topk_mse_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True, by="true"
-    )
-    plot_tabfm_candidate_topk_mse_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True, by="predicted"
-    )
+    # print("Generating TabFM top-10% candidate MSE grids (by true, by predicted)...")
+    # plot_tabfm_candidate_topk_mse_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True, by="true"
+    # )
+    # plot_tabfm_candidate_topk_mse_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True, by="predicted"
+    # )
 
     print("Generating arm-pulls landscape grid (TPE vs TabFM)...")
     plot_arm_pulls_landscape_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+        benchmarks=benchmarks,
+        n_iterations=n_iterations,
+        save_fig=True,
+        run=0,
+        agg="max",
     )
 
-    print("Generating arm-pulls parallel-coordinates grid (TPE vs TabFM)...")
-    plot_arm_pulls_parallel_coords_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    print("Generating TabFM MSE landscape grid...")
+    plot_tabfm_mse_landscape_grid(
+        benchmarks=benchmarks,
+        n_iterations=n_iterations,
+        save_fig=True,
+        run=0,
+        agg="mean",
     )
 
-    print("Generating cumulative-regret gap (TPE - TabFM) vs iteration...")
-    plot_cumulative_regret_gap(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
-    )
+    # print("Generating arm-pulls parallel-coordinates grid (TPE vs TabFM)...")
+    # plot_arm_pulls_parallel_coords_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    # )
 
-    print("Generating TabFM suggested-config bias grid...")
-    plot_tabfm_suggestion_bias_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
-    )
+    # print("Generating cumulative-regret gap (TPE - TabFM) vs iteration...")
+    # plot_cumulative_regret_gap(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    # )
 
-    print("Generating TabFM calibration grid (predicted vs true vs train-label)...")
-    plot_tabfm_calibration_grid(
-        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
-    )
+    # print("Generating TabFM suggested-config bias grid...")
+    # plot_tabfm_suggestion_bias_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    # )
+
+    # print("Generating TabFM calibration grid (predicted vs true vs train-label)...")
+    # plot_tabfm_calibration_grid(
+    #     benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    # )

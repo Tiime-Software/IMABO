@@ -185,6 +185,7 @@ def run_single_experiment(
     tabfm_suggestion_true_rewards = []
     tabfm_train_rewards = []
     tabfm_candidate_probe_iterations = []
+    tabfm_candidate_configs = []
     tabfm_candidate_predicted_rewards = []
     tabfm_candidate_true_rewards = []
     suggestion_counts: Counter = Counter()
@@ -253,10 +254,15 @@ def run_single_experiment(
                 )
 
             if probe_pool:
-                # Predicted (reward units) vs true reward for every candidate
-                # in the scored pool -- logged raw so a pool-wide MSE (or any
-                # other metric) is derivable downstream without rerunning.
+                # Config + predicted (reward units) + true reward for every
+                # candidate in the scored pool -- logged raw so a pool-wide
+                # MSE, or a per-(depth,features)-cell MSE map of where TabFM's
+                # surrogate is inaccurate, is derivable downstream without
+                # rerunning. Configs stored as key lists (param_names order).
                 tabfm_candidate_probe_iterations.append(i)
+                tabfm_candidate_configs.append(
+                    [[config[p] for p in param_names] for config, _ in probe_pool]
+                )
                 tabfm_candidate_predicted_rewards.append(
                     [float(pred) for _, pred in probe_pool]
                 )
@@ -316,6 +322,9 @@ def run_single_experiment(
             tabfm_candidate_probe_iterations
             if algorithm == Algorithm.IMOSS_TABFM
             else None
+        ),
+        "tabfm_candidate_configs": (
+            tabfm_candidate_configs if algorithm == Algorithm.IMOSS_TABFM else None
         ),
         "tabfm_candidate_predicted_rewards": (
             tabfm_candidate_predicted_rewards
