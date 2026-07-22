@@ -22,12 +22,12 @@ import matplotlib.pyplot as plt
 
 from experiments.benchmarks.rf_tabular_bandit import PARAM_NAMES, RFTabularFiniteBenchmark
 from experiments.utils.plots.plot_configs import (
+    _bench_title,
     get_algorithm_color,
     paper_style,
     save_figure,
     set_research_style,
 )
-from experiments.utils.plots.rf_tabular_bandit_plot import _bench_title
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"
 

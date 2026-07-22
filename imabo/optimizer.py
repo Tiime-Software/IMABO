@@ -604,6 +604,9 @@ class IMABOTabFM(IMABO):
         tabfm_kwargs: dict[str, Any] | None = None,
         suggest_method: Literal["ucb", "max"] = "ucb",
         on_suggestion: Callable[[ArmConfig, float, float], None] | None = None,
+        on_candidates_scored: (
+            Callable[[list[ArmConfig], np.ndarray], None] | None
+        ) = None,
     ):
         """Initialize IMABOTabFM.
 
@@ -657,6 +660,14 @@ class IMABOTabFM(IMABO):
                 the TabFM call that ranked this config. Has no effect on the
                 optimizer's behavior -- e.g. used by experiment scripts to
                 log the suggested config's predicted-vs-true MSE over time.
+            on_candidates_scored: Optional diagnostics hook, called with
+                (candidates, predicted_rewards) on every real TabFM fit
+                (i.e. not calls served from the cached `_pending_candidates`),
+                giving the whole scored candidate pool and its ensemble-mean
+                predicted rewards in reward units. Lets a caller compute an
+                MSE over the full pool -- TabFM's accuracy across the
+                candidate space -- rather than only at the chosen config. Has
+                no effect on the optimizer's behavior.
         """
         super().__init__(
             search_space=search_space,
@@ -685,6 +696,7 @@ class IMABOTabFM(IMABO):
         self._pending_candidates: list[tuple[ArmConfig, float, float]] = []
         self.suggest_method = suggest_method
         self.on_suggestion = on_suggestion
+        self.on_candidates_scored = on_candidates_scored
 
     def _configs_to_frame(self, configs: list[ArmConfig]) -> Any:
         """Build a DataFrame from configs, tagging categorical columns."""
@@ -764,6 +776,9 @@ class IMABOTabFM(IMABO):
 
         mean_reward_units = surrogate._inverse_transform_y(mean)
         max_reward_units = surrogate._inverse_transform_y(max_)
+
+        if self.on_candidates_scored is not None:
+            self.on_candidates_scored(candidates, mean_reward_units)
 
         ranked_idx = np.argsort(scores)[::-1]
         ranked = [

@@ -13,18 +13,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from experiments.utils.plots.plot_configs import (
-    adaptive_label_fontsize,
-    create_figure_legend,
-    paper_style,
-    save_figure,
-    set_research_style,
-)
-from experiments.utils.plots.rf_tabular_bandit_plot import (
     _PRETTY_LABELS,
     _bench_title,
     _ema,
     _ordered,
     _style_for,
+    adaptive_label_fontsize,
+    create_figure_legend,
+    paper_style,
+    save_figure,
+    set_research_style,
 )
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"
@@ -42,8 +40,7 @@ def _load_trace_field(
     benchmark: str, n_iterations: int | None, field: str
 ) -> tuple[dict, int]:
     """Read an arbitrary per-iteration trace `field` from every per-run JSON
-    (mirrors rf_tabular_bandit_plot._load_trace_field, pointed at this
-    experiment's own DATA_DIR instead)."""
+    in this experiment's own DATA_DIR."""
     run_pattern = re.compile(rf"{re.escape(benchmark)}_(.+)_(\d+)iters_run(\d+)\.json$")
 
     if n_iterations is None:
@@ -89,13 +86,12 @@ def plot_cumulative_regret_grid(
 ):
     """Cumulative regret vs iteration, one subplot per benchmark, side by side.
 
-    Mirrors rf_tabular_bandit_plot.plot_cumulative_regret_grid, but built from
-    the per-pull noiseless regret (`regrets`) logged in this experiment's own
-    per-run JSONs directly (no aggregated CSV exists here -- see
-    rf_arm_distribution_experiment.py) rather than from a CSV. No uncertainty
-    band, for the same reason as the other module: the cumulative mean grows
-    ~O(t) while the cumulative std of a sum grows only ~O(sqrt(t)), so any
-    band shrinks to a couple percent of the total well before t=5000.
+    Built from the per-pull noiseless regret (`regrets`) logged in this
+    experiment's own per-run JSONs directly (no aggregated CSV exists for
+    this experiment -- see rf_arm_distribution_experiment.py). No uncertainty
+    band: the cumulative mean grows ~O(t) while the cumulative std of a sum
+    grows only ~O(sqrt(t)), so any band shrinks to a couple percent of the
+    total well before t=5000.
     """
     algorithms = algorithms if algorithms is not None else _IMOSS_FAMILY
 
@@ -322,24 +318,41 @@ def plot_suggested_arm_distribution_grid(
     plt.show()
 
 
-def _load_suggestion_raw(
-    benchmark: str, n_iterations: int | None
+# (iter_field, predicted_field, true_field) for the two predicted-vs-true
+# sources logged by rf_arm_distribution_experiment.run_single_experiment:
+# the chosen configs across the N_SHADOW draws, and the full scored candidate
+# pool (all n_candidates) from the one real TabFM fit per probe.
+_SUGGESTION_FIELDS = (
+    "tabfm_suggestion_probe_iterations",
+    "tabfm_suggestion_predicted_rewards",
+    "tabfm_suggestion_true_rewards",
+)
+_CANDIDATE_FIELDS = (
+    "tabfm_candidate_probe_iterations",
+    "tabfm_candidate_predicted_rewards",
+    "tabfm_candidate_true_rewards",
+)
+
+
+def _load_predicted_true_raw(
+    benchmark: str,
+    n_iterations: int | None,
+    fields: tuple[str, str, str] = _SUGGESTION_FIELDS,
 ) -> tuple[dict[str, list[dict[int, tuple[list[float], list[float]]]]], int]:
     """Read raw per-probe (predicted, true) reward pairs from every per-run
     JSON (only IMOSS-TabFM logs these fields -- see
     rf_arm_distribution_experiment.run_single_experiment).
 
-    Each probe's `tabfm_suggestion_predicted_rewards`/`tabfm_suggestion_true_rewards`
-    entry holds one value per shadow-probe draw that actually got a TabFM
-    prediction that checkpoint (see IMABOTabFM.on_suggestion, attached only
-    to the throwaway shadow copy) -- kept raw and unaggregated here, not
-    reduced to a single metric, so any per-draw metric (squared error,
-    signed bias, or anything dreamed up later) can be derived downstream via
-    _suggestion_metric_traces without rerunning the (expensive) experiment.
+    `fields` picks the source: _SUGGESTION_FIELDS (the chosen configs, one
+    value per shadow-probe draw) or _CANDIDATE_FIELDS (the whole scored
+    candidate pool, ~n_candidates values per probe). Kept raw and
+    unaggregated so any per-value metric (squared error, signed bias, ...)
+    can be derived downstream via _metric_traces without rerunning.
 
     Returns dict[label] -> list (one per seed) of dict[iteration] ->
-    (predicted_rewards, true_rewards), each a list of up to N_SHADOW floats.
+    (predicted_rewards, true_rewards).
     """
+    iter_field, pred_field, true_field = fields
     run_pattern = re.compile(rf"{re.escape(benchmark)}_(.+)_(\d+)iters_run(\d+)\.json$")
 
     if n_iterations is None:
@@ -365,46 +378,46 @@ def _load_suggestion_raw(
         slug = match.group(1)
         with open(path) as f:
             data = json.load(f)
-        if not data.get("tabfm_suggestion_predicted_rewards"):
+        if not data.get(pred_field):
             continue
         label = _PRETTY_LABELS.get(slug, slug.replace("_", " ").title())
         per_probe = {
             it: (preds, trues)
             for it, preds, trues in zip(
-                data["tabfm_suggestion_probe_iterations"],
-                data["tabfm_suggestion_predicted_rewards"],
-                data["tabfm_suggestion_true_rewards"],
+                data[iter_field], data[pred_field], data[true_field]
             )
         }
         raw_by_algo[label].append(per_probe)
 
     if not raw_by_algo:
         raise FileNotFoundError(
-            f"No run checkpoints with tabfm_suggestion_predicted_rewards for "
-            f"T={n_iterations} in {DATA_DIR} -- run "
-            f"experiments/rf_arm_distribution_experiment.py for IMOSS-TabFM first."
+            f"No run checkpoints with {pred_field!r} for T={n_iterations} in "
+            f"{DATA_DIR} -- run experiments/rf_arm_distribution_experiment.py for "
+            f"IMOSS-TabFM first."
         )
     return raw_by_algo, n_iterations
 
 
-def _suggestion_metric_traces(
+def _metric_traces(
     benchmark: str,
     n_iterations: int | None,
     metric: Callable[[float, float], float],
+    fields: tuple[str, str, str] = _SUGGESTION_FIELDS,
 ) -> tuple[dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]], int]:
-    """Turn _load_suggestion_raw's raw (predicted, true) pairs into
-    dict[label] -> (iterations, mean, std) for an arbitrary per-draw
+    """Turn _load_predicted_true_raw's (predicted, true) pairs into
+    dict[label] -> (iterations, mean, std) for an arbitrary per-value
     `metric(predicted, true)` -- e.g. squared error for MSE, signed error
     (predicted - true) for bias. Each probe's per-seed value is the mean of
-    `metric` over that probe's draws; seeds are then aligned by intersecting
-    the set of logged iterations across seeds (probes get skipped seed to
-    seed before enough rewarded arms exist for TabFM to fit at all) before
-    averaging across seeds.
+    `metric` over that probe's values (draws for the suggestion source, the
+    whole candidate pool for the candidate source); seeds are then aligned by
+    intersecting the set of logged iterations across seeds (probes get
+    skipped seed to seed before enough rewarded arms exist for TabFM to fit
+    at all) before averaging across seeds.
 
     Returns dict[label] -> (iterations, mean, std), each 1-D, one entry per
     iteration common to every seed.
     """
-    raw_by_algo, n_iterations = _load_suggestion_raw(benchmark, n_iterations)
+    raw_by_algo, n_iterations = _load_predicted_true_raw(benchmark, n_iterations, fields)
 
     traces = {}
     for label, per_seed_maps in raw_by_algo.items():
@@ -427,11 +440,19 @@ def _suggestion_metric_traces(
 
 
 def _load_suggestion_mse_traces(benchmark: str, n_iterations: int | None):
-    return _suggestion_metric_traces(benchmark, n_iterations, lambda p, t: (p - t) ** 2)
+    return _metric_traces(
+        benchmark, n_iterations, lambda p, t: (p - t) ** 2, _SUGGESTION_FIELDS
+    )
+
+
+def _load_candidate_mse_traces(benchmark: str, n_iterations: int | None):
+    return _metric_traces(
+        benchmark, n_iterations, lambda p, t: (p - t) ** 2, _CANDIDATE_FIELDS
+    )
 
 
 def _load_suggestion_bias_traces(benchmark: str, n_iterations: int | None):
-    return _suggestion_metric_traces(benchmark, n_iterations, lambda p, t: p - t)
+    return _metric_traces(benchmark, n_iterations, lambda p, t: p - t)
 
 
 def _plot_suggestion_metric_grid(
@@ -525,17 +546,47 @@ def plot_tabfm_suggestion_error_grid(
     """TabFM's suggested-config MSE vs iteration, one subplot per benchmark.
 
     Each point is the MSE between TabFM's predicted reward (in reward units)
-    and the true reward, averaged over the N_SHADOW=10 shadow-probe draws at
-    that checkpoint (see rf_arm_distribution_experiment.run_single_experiment
-    and IMABOTabFM.on_suggestion), logged on the fixed oracle_probe_every
-    schedule. In practice this stays small and roughly stable, since TabFM's
-    picks are well-calibrated (see plot_tabfm_calibration_grid). Only
+    and the true reward for the configs it actually suggests (the N_SHADOW=10
+    shadow-probe picks at that checkpoint -- see
+    rf_arm_distribution_experiment.run_single_experiment and
+    IMABOTabFM.on_suggestion), logged on the fixed oracle_probe_every
+    schedule. This is the picks-only counterpart to
+    plot_tabfm_candidate_mse_grid (which averages over the whole pool). Only
     IMOSS-TabFM logs this field.
     """
     _plot_suggestion_metric_grid(
         _load_suggestion_mse_traces,
         "TabFM Suggested-Config MSE",
         "tabfm_suggestion_mse_grid",
+        benchmarks=benchmarks,
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        smoothing_span=smoothing_span,
+        log_scale=log_scale,
+    )
+
+
+def plot_tabfm_candidate_mse_grid(
+    benchmarks=("rf146822", "rf31", "rf167120"),
+    n_iterations=None,
+    save_fig=False,
+    smoothing_span=1,
+    log_scale=True,
+):
+    """TabFM's candidate-pool MSE vs iteration, one subplot per benchmark.
+
+    Each point is the MSE between TabFM's predicted reward (in reward units)
+    and the true reward over the *whole* scored candidate pool (all
+    n_candidates from the real TabFM fit at that probe -- see
+    rf_arm_distribution_experiment.run_single_experiment and
+    IMABOTabFM.on_candidates_scored), not just the chosen config. It measures
+    TabFM's accuracy across the candidate space, logged on the fixed
+    oracle_probe_every schedule. Only IMOSS-TabFM logs this field.
+    """
+    _plot_suggestion_metric_grid(
+        _load_candidate_mse_traces,
+        "TabFM Candidate-Pool MSE",
+        "tabfm_candidate_mse_grid",
         benchmarks=benchmarks,
         n_iterations=n_iterations,
         save_fig=save_fig,
@@ -942,6 +993,11 @@ if __name__ == "__main__":
 
     print("Generating TabFM suggested-config MSE grid...")
     plot_tabfm_suggestion_error_grid(
+        benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
+    )
+
+    print("Generating TabFM candidate-pool MSE grid...")
+    plot_tabfm_candidate_mse_grid(
         benchmarks=benchmarks, n_iterations=n_iterations, save_fig=True
     )
 

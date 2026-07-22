@@ -3,6 +3,7 @@
 import copy
 import json
 from collections import Counter
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -10,22 +11,79 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from experiments.baselines.random_search import RandomSearch
+from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
-from experiments.rf_tabular_bandit_experiment import (
-    BETA,
-    Algorithm,
-    algo_slug,
-    benchmark_tag,
-    build_optimizer,
-)
+from imabo import IMABO
 from imabo.memory import config_to_key
 from imabo.optimizer import IMABOTabFM, load_tabfm
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite_arm_distribution"
 RESULT_DIR.mkdir(exist_ok=True)
 
+BETA = 0.5
 N_SHADOW = 10
 N_JOBS = 8
+
+
+class Algorithm(Enum):
+    IMOSS_TPE = "IMOSS-TPE"
+    IMOSS = "IMOSS-Random"
+    RANDOM = "Random Search"
+    IMOSS_TABFM = "IMOSS-TabFM"
+    UCB_AIR = "UCB-AIR"
+
+
+def algo_slug(algorithm: Algorithm) -> str:
+    """Filesystem-safe label, used for per-algorithm result filenames."""
+    return algorithm.value.lower().replace(" ", "_").replace("-", "_")
+
+
+def benchmark_tag(bm_id: int, noise: bool) -> str:
+    """Filename prefix -- keeps different benchmarks (bm_id) and the noiseless
+    ablation's files from ever colliding with (or overwriting) each other."""
+    return f"rf{bm_id}" if noise else f"rf{bm_id}noiseless"
+
+
+def build_optimizer(
+    algorithm: Algorithm,
+    search_space: dict[str, Any],
+    seed: int,
+    tabfm_model: Any = None,
+):
+    if algorithm == Algorithm.IMOSS_TPE:
+        return IMABO(
+            search_space=search_space,
+            seed=seed,
+            multivariate=True,
+            beta=BETA,
+        )
+    elif algorithm == Algorithm.IMOSS:
+        return IMABO(
+            search_space=search_space,
+            seed=seed,
+            multivariate=True,
+            use_tpe=False,
+            beta=BETA,
+        )
+    elif algorithm == Algorithm.RANDOM:
+        return RandomSearch(search_space=search_space, seed=seed)
+    elif algorithm == Algorithm.IMOSS_TABFM:
+        model = tabfm_model if tabfm_model is not None else load_tabfm()
+        return IMABOTabFM(
+            search_space=search_space,
+            seed=seed,
+            tabfm_model=model,
+            beta=BETA,
+        )
+    elif algorithm == Algorithm.UCB_AIR:
+        return UCBAIR(
+            search_space=search_space,
+            seed=seed,
+            beta=BETA,
+        )
+
+
 # The oracle-proposal shadow probe (see _oracle_propose) always calls the real
 # oracle (bypassing the cheap MOSS exploit branch), which is expensive for
 # IMOSS-TabFM -- one TabFM fit+predict per probed iteration, no cross-
@@ -70,8 +128,8 @@ def _shadow_copy(opt: Any) -> Any:
     read-only attributes shared across instances.
 
     IMABOTabFM's `_tabfm_model` is a single frozen pretrained model reused
-    across every run/budget (see rf_tabular_bandit_experiment.run_experiment);
-    deep-copying its weights on every one of thousands of iterations would be
+    across every run/budget (see run_experiment below); deep-copying its
+    weights on every one of thousands of iterations would be
     both unnecessary (it's never mutated) and far too slow. Pre-seeding the
     deepcopy memo with its id makes copy.deepcopy skip it and reuse the same
     reference in the copy instead.
@@ -95,8 +153,8 @@ def run_single_experiment(
     """Run one seed, recording every `oracle_probe_every` iterations the
     mean/std of the true reward of `n_shadow` independent draws from the
     oracle's raw proposal at that state (see _shadow_copy, _oracle_propose),
-    alongside the same real-trajectory fields as
-    rf_tabular_bandit_experiment.run_single_experiment.
+    alongside the real-trajectory fields (regrets, simple regret, suggestion
+    counts).
     """
     if algorithm == Algorithm.IMOSS_TABFM:
         opt = IMABOTabFM(
@@ -126,6 +184,9 @@ def run_single_experiment(
     tabfm_suggestion_predicted_max_rewards = []
     tabfm_suggestion_true_rewards = []
     tabfm_train_rewards = []
+    tabfm_candidate_probe_iterations = []
+    tabfm_candidate_predicted_rewards = []
+    tabfm_candidate_true_rewards = []
     suggestion_counts: Counter = Counter()
     for i in tqdm(range(n_iterations), desc=algorithm.value, leave=False):
         if has_oracle and i % oracle_probe_every == 0:
@@ -145,6 +206,15 @@ def run_single_experiment(
                     lambda config, mean_pred, max_pred: probe_preds.append(
                         (config, mean_pred, max_pred)
                     )
+                )
+
+            # The full candidate pool (all n_candidates), captured on the one
+            # real TabFM fit among these draws -- for a pool-wide MSE (TabFM's
+            # accuracy across the candidate space), not just at its picks.
+            probe_pool: list[tuple[Any, float]] = []
+            if hasattr(shadow, "on_candidates_scored"):
+                shadow.on_candidates_scored = lambda cands, preds: probe_pool.extend(
+                    zip(cands, preds)
                 )
 
             shadow_configs = [_oracle_propose(shadow) for _ in range(n_shadow)]
@@ -180,6 +250,18 @@ def run_single_experiment(
                 shadow_rewarded_arms = shadow.get_rewarded_arms(shadow_state)
                 tabfm_train_rewards.append(
                     [float(stats.mean_reward) for _, stats in shadow_rewarded_arms]
+                )
+
+            if probe_pool:
+                # Predicted (reward units) vs true reward for every candidate
+                # in the scored pool -- logged raw so a pool-wide MSE (or any
+                # other metric) is derivable downstream without rerunning.
+                tabfm_candidate_probe_iterations.append(i)
+                tabfm_candidate_predicted_rewards.append(
+                    [float(pred) for _, pred in probe_pool]
+                )
+                tabfm_candidate_true_rewards.append(
+                    [bench.mean_reward(config) for config, _ in probe_pool]
                 )
 
         x = opt.suggest()
@@ -230,6 +312,21 @@ def run_single_experiment(
         "tabfm_train_rewards": (
             tabfm_train_rewards if algorithm == Algorithm.IMOSS_TABFM else None
         ),
+        "tabfm_candidate_probe_iterations": (
+            tabfm_candidate_probe_iterations
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
+        "tabfm_candidate_predicted_rewards": (
+            tabfm_candidate_predicted_rewards
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
+        "tabfm_candidate_true_rewards": (
+            tabfm_candidate_true_rewards
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
         "best_config": best,
         "best_reward": best_reward,
         "best_config_suggestions": (
@@ -251,7 +348,7 @@ def run_multiple_experiments(
     n_jobs: int = N_JOBS,
 ) -> list[dict]:
     """Run multiple independent runs of a single algorithm, checkpointed per
-    run (mirrors rf_tabular_bandit_experiment.run_multiple_experiments)."""
+    run."""
     stem = (
         f"{benchmark_tag(bench.bm_id, True)}_{algo_slug(algorithm)}_{n_iterations}iters"
     )
@@ -317,11 +414,11 @@ def run_experiment(
 
 
 if __name__ == "__main__":
-    n_runs = 2
+    n_runs = 10
     base_seed = 42
     n_iter = 5000
-    # Same three benchmarks as rf_tabular_bandit_experiment.py, spanning
-    # reward-noise regimes: segment (clean), credit-g (noisy), numerai28.6 (hard).
+    # Three benchmarks spanning reward-noise regimes: segment (clean),
+    # credit-g (noisy), numerai28.6 (hard).
     bm_ids = [146822, 31, 167120]
     # The IMOSS proposal-oracle family for the oracle-distribution shadow
     # probe, plus UCB-AIR kept only for the shared cumulative-regret grid

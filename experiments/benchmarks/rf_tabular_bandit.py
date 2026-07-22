@@ -81,7 +81,7 @@ class RFTabularFiniteBenchmark:
 
         `self.rng` otherwise keeps advancing across every call to this same
         instance -- if one benchmark object is reused across several runs
-        (e.g. rf_tabular_bandit_experiment.py's `bench`, shared across every
+        (e.g. rf_arm_distribution_experiment.py's `bench`, shared across every
         algorithm and best_config_strategy), later runs silently see a noise
         sequence that depends on how much noise every prior run consumed,
         breaking reproducibility and any seed-controlled comparison between

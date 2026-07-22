@@ -377,7 +377,7 @@ if __name__ == "__main__":
     }
     n_samples = 5000
     n_runs = 5
-    save_fig = False
+    save_fig = True
     plot_hotpotqa_results(
         algorithms=algorithms,
         n_samples=n_samples,

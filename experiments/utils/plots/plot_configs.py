@@ -440,6 +440,68 @@ def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
     return ax.add_patch(ellipse)
 
 
+# --- Shared helpers for the RF tabular-bandit family of plots -------------
+# (rf_arm_distribution_plot.py, rf_landscape_plot.py) -- moved out of the now-
+# deleted rf_tabular_bandit_plot.py, which these scripts imported from.
+_PRETTY_LABELS = {
+    "imoss_tpe": "IMOSS-TPE",
+    "imoss": "IMOSS",
+    "random_search": "Random Search",
+    "imoss_tabfm": "IMOSS-TabFM",
+    "ucb_air": "UCB-AIR",
+}
+
+_CANONICAL_ORDER = [
+    "IMOSS",
+    "IMOSS-TPE",
+    "IMOSS-TabFM",
+    "UCB-AIR",
+]
+
+_BENCH_NAMES = {
+    "rf146822": "segment",
+    "rf31": "credit-g",
+    "rf167120": "numerai28.6",
+    "rf9952": "phoneme",
+    "rf3": "kr-vs-kp",
+}
+
+
+def _bench_title(benchmark: str) -> str:
+    return _BENCH_NAMES.get(benchmark, benchmark.upper())
+
+
+def _ordered(present) -> list[str]:
+    """Algorithms present AND in _CANONICAL_ORDER, in that order.
+
+    _CANONICAL_ORDER is the source of truth for which algorithms are in the
+    comparison: anything not listed there is dropped, so the multi-benchmark
+    grids never pick up an un-styled series.
+    """
+    present = set(present)
+    return [a for a in _CANONICAL_ORDER if a in present]
+
+
+def _style_for(algo: str) -> tuple[str, str]:
+    """(color, marker) fixed per algorithm -- thin alias over algorithm_style,
+    kept for the call sites that already spell it this way."""
+    return algorithm_style(algo)
+
+
+def _ema(x: np.ndarray, span: float) -> np.ndarray:
+    """Causal exponential moving average along the last axis (TensorBoard-style
+    smoothing), same length as input. span=1 is a no-op; larger spans smooth
+    more heavily at the cost of a slight lag."""
+    if span <= 1:
+        return x
+    alpha = 2.0 / (span + 1.0)
+    out = np.empty_like(x, dtype=float)
+    out[0] = x[0]
+    for t in range(1, len(x)):
+        out[t] = alpha * x[t] + (1.0 - alpha) * out[t - 1]
+    return out
+
+
 def set_research_style():
     plt.rcParams.update(
         {
