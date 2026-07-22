@@ -72,7 +72,6 @@ def build_optimizer(
             seed=seed,
             tabfm_model=model,
             beta=BETA,
-            n_estimators=6,
         )
     elif algorithm == Algorithm.UCB_AIR:
         return UCBAIR(
@@ -101,10 +100,6 @@ def run_single_experiment(
     param_names = sorted(bench.get_search_space().keys())
 
     regrets = []
-    # Anytime simple regret: at each step, the true regret of the config the
-    # optimizer would RETURN as best if stopped now (its actual selection
-    # strategy applied to the current state) -- lets us plot convergence of the
-    # returned answer over the budget, not just the final scalar simple_regret.
     simple_regret_trace = []
     suggestion_counts: Counter = Counter()
     for _ in tqdm(range(n_iterations), desc=algorithm.value, leave=False):

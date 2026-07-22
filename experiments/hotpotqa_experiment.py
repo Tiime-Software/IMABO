@@ -80,6 +80,7 @@ def build_optimizer(
             seed=seed,
             beta=beta,
             tabfm_model=model,
+            suggest_method="max",
         )
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=SEARCH_SPACE, seed=seed)
@@ -486,7 +487,7 @@ if __name__ == "__main__":
     n_samples = 5000
     n_runs = 5
     n_holdout = 500
-    algorithm = Algorithm.UCB_AIR
+    algorithm = Algorithm.IMOSS_TABFM
 
     run_multiple_experiments(
         n_samples=n_samples,

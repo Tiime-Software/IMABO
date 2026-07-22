@@ -98,14 +98,6 @@ def run_single_experiment(
     alongside the same real-trajectory fields as
     rf_tabular_bandit_experiment.run_single_experiment.
     """
-    tabfm_candidate_mse_iterations: list[int] = []
-    tabfm_candidate_mse: list[float] = []
-
-    def _log_candidate_mse(candidates, mean_preds, std_preds) -> None:
-        true_vals = np.array([bench.mean_reward(c) for c in candidates])
-        tabfm_candidate_mse_iterations.append(i)
-        tabfm_candidate_mse.append(float(np.mean((mean_preds - true_vals) ** 2)))
-
     if algorithm == Algorithm.IMOSS_TABFM:
         opt = IMABOTabFM(
             search_space=bench.get_search_space(),
@@ -113,8 +105,7 @@ def run_single_experiment(
             tabfm_model=tabfm_model,
             beta=BETA,
             suggest_method="max",
-            on_candidates_scored=_log_candidate_mse,
-            n_estimators=6,
+            n_estimators=4,
         )
     else:
         opt = build_optimizer(algorithm, bench.get_search_space(), seed, tabfm_model)
@@ -130,20 +121,66 @@ def run_single_experiment(
     shadow_probe_iterations = []
     shadow_reward_mean = []
     shadow_reward_std = []
+    tabfm_suggestion_probe_iterations = []
+    tabfm_suggestion_predicted_rewards = []
+    tabfm_suggestion_predicted_max_rewards = []
+    tabfm_suggestion_true_rewards = []
+    tabfm_train_rewards = []
     suggestion_counts: Counter = Counter()
     for i in tqdm(range(n_iterations), desc=algorithm.value, leave=False):
         if has_oracle and i % oracle_probe_every == 0:
-            # _oracle_propose() never calls memory.pull_arm(), so unlike the
-            # `shadow.suggest()` probe this used to be, it leaves step_counter
-            # and nb_pending completely untouched -- no state-leakage caveat
-            # needed.
+            # _oracle_propose() never calls memory.pull_arm()
             shadow = _shadow_copy(opt)
-            shadow_rewards = [
-                bench.mean_reward(_oracle_propose(shadow)) for _ in range(n_shadow)
-            ]
+
+            # Piggyback on the same N_SHADOW draws to also get TabFM's own
+            # predicted value for each one (see IMABOTabFM.on_suggestion) --
+            # collecting onto `shadow` only, never `opt`, so the real
+            # trajectory stays uninstrumented. `on_suggestion` doesn't fire
+            # when suggest_new falls back to a random config (not enough
+            # rewarded arms yet), which is all-or-nothing across these 10
+            # draws since none of them mutate `shadow`'s state.
+            probe_preds: list[tuple[Any, float, float]] = []
+            if hasattr(shadow, "on_suggestion"):
+                shadow.on_suggestion = (
+                    lambda config, mean_pred, max_pred: probe_preds.append(
+                        (config, mean_pred, max_pred)
+                    )
+                )
+
+            shadow_configs = [_oracle_propose(shadow) for _ in range(n_shadow)]
+            shadow_rewards = [bench.mean_reward(c) for c in shadow_configs]
             shadow_probe_iterations.append(i)
             shadow_reward_mean.append(float(np.mean(shadow_rewards)))
             shadow_reward_std.append(float(np.std(shadow_rewards)))
+
+            if probe_preds:
+                # Raw predicted/true reward pairs, not a pre-computed metric:
+                # lets any per-draw metric (squared error, signed bias,
+                # anything dreamed up later) be derived downstream from
+                # these two lists without rerunning the experiment.
+                tabfm_suggestion_probe_iterations.append(i)
+                tabfm_suggestion_predicted_rewards.append(
+                    [mean_pred for _, mean_pred, _ in probe_preds]
+                )
+                tabfm_suggestion_predicted_max_rewards.append(
+                    [max_pred for _, _, max_pred in probe_preds]
+                )
+                tabfm_suggestion_true_rewards.append(
+                    [bench.mean_reward(config) for config, _, _ in probe_preds]
+                )
+
+                # The reward labels TabFM actually fit on at this probe (one
+                # per distinct rewarded arm, the exact set _fit_surrogate
+                # uses -- see _oracle_propose). Logged raw and aligned 1:1
+                # with the suggestion probes above, to test whether the
+                # predicted-reward collapse tracks a downward drift in this
+                # training-label distribution as random exploration keeps
+                # adding mostly-mediocre arms.
+                shadow_state = shadow.memory.get_current_state()
+                shadow_rewarded_arms = shadow.get_rewarded_arms(shadow_state)
+                tabfm_train_rewards.append(
+                    [float(stats.mean_reward) for _, stats in shadow_rewarded_arms]
+                )
 
         x = opt.suggest()
         y = bench(x, noise=True)
@@ -170,13 +207,28 @@ def run_single_experiment(
         "shadow_probe_iterations": shadow_probe_iterations if has_oracle else None,
         "shadow_reward_mean": shadow_reward_mean if has_oracle else None,
         "shadow_reward_std": shadow_reward_std if has_oracle else None,
-        "tabfm_candidate_mse_iterations": (
-            tabfm_candidate_mse_iterations
+        "tabfm_suggestion_probe_iterations": (
+            tabfm_suggestion_probe_iterations
             if algorithm == Algorithm.IMOSS_TABFM
             else None
         ),
-        "tabfm_candidate_mse": (
-            tabfm_candidate_mse if algorithm == Algorithm.IMOSS_TABFM else None
+        "tabfm_suggestion_predicted_rewards": (
+            tabfm_suggestion_predicted_rewards
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
+        "tabfm_suggestion_predicted_max_rewards": (
+            tabfm_suggestion_predicted_max_rewards
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
+        "tabfm_suggestion_true_rewards": (
+            tabfm_suggestion_true_rewards
+            if algorithm == Algorithm.IMOSS_TABFM
+            else None
+        ),
+        "tabfm_train_rewards": (
+            tabfm_train_rewards if algorithm == Algorithm.IMOSS_TABFM else None
         ),
         "best_config": best,
         "best_reward": best_reward,
@@ -265,7 +317,7 @@ def run_experiment(
 
 
 if __name__ == "__main__":
-    n_runs = 10
+    n_runs = 2
     base_seed = 42
     n_iter = 5000
     # Same three benchmarks as rf_tabular_bandit_experiment.py, spanning

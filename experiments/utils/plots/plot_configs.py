@@ -136,37 +136,48 @@ def algorithm_marker(name: str) -> str:
 
 
 # --- Print-figure sizing -----------------------------------------------
-# CONFERENCE_PAGE_WIDTHS_IN maps a conference name -> two physical widths (in):
-#   "single_column" -- a narrow figure (columns=1): one of AAAI's two text
-#       columns, or half of NeurIPS' single text column for side-by-side use.
-#   "double_column" -- a full-text-width figure (columns=2): AAAI's `figure*`
-#       spanning both columns, or NeurIPS' full 5.5in text block.
-# So `columns` means the same thing for both: 1 = narrow, 2 = full width.
-#   AAAI    -- aaai2027 .sty: \textwidth 7.0in, \columnsep 0.375in, so one
-#              column is (7.0-0.375)/2 = 3.31in. Two-column template.
-#   NeurIPS -- neurips .sty: \textwidth 5.5in, single-column template; the
-#              "single_column" half (2.65in) is for two figures side by side.
-#   arXiv   -- article/arxiv.sty on letterpaper with ~1in margins: \textwidth
-#              6.5in, single-column; the "single_column" half (3.1in) is for
-#              two figures side by side.
-CONFERENCE_PAGE_WIDTHS_IN = {
-    "aaai": {"single_column": 3.3, "double_column": 7.0},
-    "neurips": {"single_column": 2.65, "double_column": 5.5},
-    "arxiv": {"single_column": 3.1, "double_column": 6.5},
+# Per-conference page geometry. `two_column` says whether the template sets
+# body text in two columns (AAAI) or one (NeurIPS, arXiv). Widths in inches:
+#   "column" -- one text column (only defined for two-column templates)
+#   "text"   -- the full text-block width (\textwidth)
+#   AAAI    -- aaai2027.sty: \textwidth 7.0in, \columnsep 0.375in, so one
+#              column is (7.0-0.375)/2 = 3.31in. Two columns.
+#   NeurIPS -- neurips .sty: single column, \textwidth 5.5in.
+#   arXiv   -- article/arxiv.sty on letterpaper, ~1in margins: \textwidth 6.5in.
+# `columns` is how many of the template's text columns a figure spans. AAAI
+# supports 1 (\columnwidth) or 2 (\textwidth, a `figure*`). NeurIPS and arXiv
+# are single-column, so a figure always spans the one text column -- columns=1
+# gives the full text width and there is no 2-column span.
+CONFERENCE_SPECS = {
+    "aaai": {"two_column": True, "column": 3.3, "text": 7.0},
+    "neurips": {"two_column": False, "text": 5.5},
+    "arxiv": {"two_column": False, "text": 6.5},
 }
 
 
-def paper_figure_width_in(columns: int = 2, conference: str = "aaai") -> float:
-    """Physical width (inches) to generate a figure at for a `columns`-wide
-    (1 = narrow / single text column, 2 = full text width) placement in
-    `conference`'s template, so it embeds at ~100% scale without needing to be
-    shrunk afterward."""
-    widths = CONFERENCE_PAGE_WIDTHS_IN[conference]
+def paper_figure_width_in(columns: int = 1, conference: str = "aaai") -> float:
+    """Physical width (inches) for a figure spanning `columns` text columns of
+    `conference`'s template, generated at that size so it embeds at ~100%
+    scale without being shrunk afterward.
+
+    Two-column templates (AAAI): columns=1 -> one column, columns=2 -> both
+    columns (a LaTeX `figure*`). Single-column templates (NeurIPS, arXiv) have
+    only one text column, so columns=1 gives the full text width; there is no
+    2-column span, so columns != 1 raises.
+    """
+    spec = CONFERENCE_SPECS[conference]
+    if not spec["two_column"]:
+        if columns != 1:
+            raise ValueError(
+                f"{conference!r} is a single-column format: a figure spans the "
+                f"full text width (columns=1); it has no {columns}-column span."
+            )
+        return spec["text"]
     if columns == 1:
-        return widths["single_column"]
+        return spec["column"]
     if columns == 2:
-        return widths["double_column"]
-    raise ValueError(f"columns must be 1 or 2, got {columns!r}")
+        return spec["text"]
+    raise ValueError(f"columns must be 1 or 2 for {conference!r}, got {columns!r}")
 
 
 # Plain pt sizes for a figure generated via paper_figure_width_in. Same
@@ -192,8 +203,8 @@ def legend_ncol_for_columns(
     return -(-n_labels // 2)  # ceil(n_labels / 2) -> 2 rows
 
 # AAAI-specific aliases, kept as the reference values the above were derived
-# from (7.0in double-column \textwidth == paper_figure_width_in(2, "aaai")).
-AAAI_TEXTWIDTH_IN = CONFERENCE_PAGE_WIDTHS_IN["aaai"]["double_column"]
+# from (7.0in \textwidth == paper_figure_width_in(2, "aaai")).
+AAAI_TEXTWIDTH_IN = CONFERENCE_SPECS["aaai"]["text"]
 AAAI_TITLE_FONTSIZE = PAPER_TITLE_FONTSIZE
 AAAI_TICK_FONTSIZE = PAPER_TICK_FONTSIZE
 AAAI_LABEL_FONTSIZE = PAPER_LABEL_FONTSIZE
@@ -342,8 +353,13 @@ def create_figure_legend(
     ncol: int,
     bbox_y: float = 1.08,
     fontsize: float | None = None,
+    loc: str = "upper center",
 ) -> None:
-    """Add a shared top legend to `fig`."""
+    """Add a legend to `fig`, anchored at (0.5, bbox_y) via `loc` (default
+    "upper center": bbox_y is the legend's top edge, for the usual shared-top-
+    legend placement). Pass loc="center" with a bbox_y computed from an actual
+    Axes position (see plot_regret_and_oracle_grid) to center a second legend
+    inside a reserved gap between subplot rows instead."""
     if fontsize is None:
         fig_width, _ = fig.get_size_inches()
         fontsize = np.clip(
@@ -353,7 +369,7 @@ def create_figure_legend(
     fig.legend(
         handles,
         labels,
-        loc="upper center",
+        loc=loc,
         bbox_to_anchor=(0.5, bbox_y),
         ncol=ncol,
         frameon=False,

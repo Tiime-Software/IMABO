@@ -603,9 +603,7 @@ class IMABOTabFM(IMABO):
         tabfm_model: Any | None = None,
         tabfm_kwargs: dict[str, Any] | None = None,
         suggest_method: Literal["ucb", "max"] = "ucb",
-        on_candidates_scored: (
-            Callable[[list[ArmConfig], np.ndarray, np.ndarray], None] | None
-        ) = None,
+        on_suggestion: Callable[[ArmConfig, float, float], None] | None = None,
     ):
         """Initialize IMABOTabFM.
 
@@ -648,15 +646,17 @@ class IMABOTabFM(IMABO):
                 ``TabFMRegressor``.
             suggest_method: "ucb" scores candidates as mean + kappa * std;
                 "max" scores them as the ensemble max (ignores kappa).
-            on_candidates_scored: Optional diagnostics hook, called with
-                (candidates, mean_preds, std_preds) every time TabFM actually
-                re-fits and re-scores a fresh candidate pool (i.e. real
-                fit+predict calls, not calls served from the cached
-                `_pending_candidates`). `mean_preds`/`std_preds` are the
-                per-candidate mean/std of the raw ``(n_estimators,
-                n_candidates)`` ensemble output. Has no effect on the
+            on_suggestion: Optional diagnostics hook, called with
+                (config, mean_pred, max_pred) every time `suggest_new`
+                actually returns a config -- fires on *every* call,
+                including ones served from the cached `_pending_candidates`,
+                reporting the predicted value only for the config actually
+                suggested (not the whole scored pool). `mean_pred` is the
+                ensemble average; `max_pred` is the ensemble max (the value
+                `suggest_method="max"` actually ranks by), both computed at
+                the TabFM call that ranked this config. Has no effect on the
                 optimizer's behavior -- e.g. used by experiment scripts to
-                log the candidate pool's predicted-vs-true MSE over time.
+                log the suggested config's predicted-vs-true MSE over time.
         """
         super().__init__(
             search_space=search_space,
@@ -682,9 +682,9 @@ class IMABOTabFM(IMABO):
         self._tabfm_model = (
             tabfm_model if tabfm_model is not None else load_tabfm(model_type)
         )
-        self._pending_candidates: list[ArmConfig] = []
+        self._pending_candidates: list[tuple[ArmConfig, float, float]] = []
         self.suggest_method = suggest_method
-        self.on_candidates_scored = on_candidates_scored
+        self.on_suggestion = on_suggestion
 
     def _configs_to_frame(self, configs: list[ArmConfig]) -> Any:
         """Build a DataFrame from configs, tagging categorical columns."""
@@ -733,26 +733,48 @@ class IMABOTabFM(IMABO):
             return self.generate_random_config()
 
         if self._pending_candidates:
-            return self._pending_candidates.pop(0)
+            config, mean_pred, max_pred = self._pending_candidates.pop(0)
+            if self.on_suggestion is not None:
+                self.on_suggestion(config, mean_pred, max_pred)
+            return config
 
         surrogate = self._fit_surrogate(rewarded_arms)
 
         candidates = [self.generate_random_config() for _ in range(self.n_candidates)]
         X_candidates = self._configs_to_frame(candidates)
 
+        # `_predict_internal` returns per-ensemble-member predictions in
+        # TabFM's *standardized* y-space (mean~0/std~1 vs the current training
+        # labels); raw reward units only come back via `_inverse_transform_y`
+        # (what `predict()` applies). Ranking is invariant to that monotonic
+        # affine transform, so scoring in standardized space is fine -- but
+        # the values handed to `on_suggestion` must be inverse-transformed,
+        # or a predicted-vs-true-reward diagnostic compares standardized
+        # numbers against raw [0,1] rewards. The transform is affine with
+        # positive scale, so it commutes with both mean and max over members
+        # (and reproduces `predict()` exactly for the default enable_nnls=False).
         preds = np.asarray(surrogate._predict_internal(X_candidates))
         mean = preds.mean(axis=0)
         std = preds.std(axis=0)
+        max_ = preds.max(axis=0)
         if self.suggest_method == "ucb":
             scores = mean + self.kappa * std
         elif self.suggest_method == "max":
-            scores = preds.max(axis=0)
+            scores = max_
 
-        if self.on_candidates_scored is not None:
-            self.on_candidates_scored(candidates, mean, std)
+        mean_reward_units = surrogate._inverse_transform_y(mean)
+        max_reward_units = surrogate._inverse_transform_y(max_)
 
         ranked_idx = np.argsort(scores)[::-1]
-        ranked = [candidates[i] for i in ranked_idx[: self.refit_every]]
+        ranked = [
+            (candidates[i], float(mean_reward_units[i]), float(max_reward_units[i]))
+            for i in ranked_idx[: self.refit_every]
+        ]
 
-        chosen, self._pending_candidates = ranked[0], ranked[1:]
+        (chosen, chosen_mean, chosen_max), self._pending_candidates = (
+            ranked[0],
+            ranked[1:],
+        )
+        if self.on_suggestion is not None:
+            self.on_suggestion(chosen, chosen_mean, chosen_max)
         return chosen

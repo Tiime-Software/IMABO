@@ -619,7 +619,7 @@ def plot_combined_regrets_grid(
         conference: Which conference's column widths to use (default "aaai").
     """
     n_bench = len(benchmarks)
-    style = paper_style(conference=conference, columns=columns)
+    style = paper_style(conference=conference, columns=columns, markevery_divisor=10)
 
     # Peek at the first benchmark's algorithm count so the figure can be
     # sized to fit the legend from the start (see plot_regret_and_oracle_grid
