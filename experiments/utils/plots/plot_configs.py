@@ -78,7 +78,7 @@ _PALETTE_ORANGE = "#E69F00"
 _PALETTE_GREEN = "#009E73"
 _PALETTE_VERMILLION = "#D55E00"
 ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
-    "IMOSS": (_PALETTE_BLUE, "o"),  # rf
+    "IMOSS-Random": (_PALETTE_BLUE, "o"),  # rf (random oracle; a.k.a. IMOSS)
     "IMOSS-TPE": (_PALETTE_ORANGE, "^"),  # rf, hotpotqa, hpo   (a.k.a. IMABO)
     "IMOSS-TabFM": (_PALETTE_GREEN, "s"),  # rf, hotpotqa
     "UCB-AIR": (_PALETTE_VERMILLION, "D"),  # rf, hotpotqa
@@ -93,8 +93,9 @@ _DEFAULT_ALGORITHM_STYLE = ("#000000", "o")
 # Raw-name -> canonical-identity aliases (matched after case/suffix folding).
 _ALGORITHM_ALIASES = {
     "imabo": "IMOSS-TPE",
-    "imabo-notpe": "IMOSS",
-    "imoss": "IMOSS",
+    "imabo-notpe": "IMOSS-Random",
+    "imoss": "IMOSS-Random",
+    "imoss-random": "IMOSS-Random",
     "imoss-tpe": "IMOSS-TPE",
     "imoss-tabfm": "IMOSS-TabFM",
     "ucb-air": "UCB-AIR",
@@ -445,14 +446,15 @@ def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
 # deleted rf_tabular_bandit_plot.py, which these scripts imported from.
 _PRETTY_LABELS = {
     "imoss_tpe": "IMOSS-TPE",
-    "imoss": "IMOSS",
+    "imoss": "IMOSS-Random",
+    "imoss_random": "IMOSS-Random",
     "random_search": "Random Search",
     "imoss_tabfm": "IMOSS-TabFM",
     "ucb_air": "UCB-AIR",
 }
 
 _CANONICAL_ORDER = [
-    "IMOSS",
+    "IMOSS-Random",
     "IMOSS-TPE",
     "IMOSS-TabFM",
     "UCB-AIR",

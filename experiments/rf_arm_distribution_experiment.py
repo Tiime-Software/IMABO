@@ -335,6 +335,14 @@ def run_single_experiment(
         "most_suggested_count": most_suggested_count,
         "is_best_most_suggested": best_key is not None
         and best_key == most_suggested_key,
+        # Full real-trajectory pull distribution over the search space (every
+        # opt.suggest(), explore + exploit), keyed by config. Tuples aren't
+        # JSON keys, so stored as [config_key_list, count] pairs. The 2D
+        # pulls-overlay plot reconstructs (param -> value) via param_names.
+        "suggestion_counts": [
+            [list(key), count] for key, count in suggestion_counts.items()
+        ],
+        "param_names": param_names,
     }
 
 
