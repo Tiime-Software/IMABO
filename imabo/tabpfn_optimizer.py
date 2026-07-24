@@ -8,21 +8,17 @@ candidate configs, and proposes the best one under an acquisition rule
 amortized over ``refit_every`` candidates so the foundation-model call is shared
 across several explore steps.
 
-Ensemble read-out (``ensemble_readout``)
+Ensemble read-out
     TabPFN's public ``predict`` returns one predictive distribution per
     candidate that already averages its ``n_estimators`` internal forward
-    passes. Two ways to turn that into the ``mean``/``std``/optimistic values the
-    acquisition needs:
-
-    * ``"members"`` (default): reconstruct each ensemble member's own mean
-      prediction from TabPFN's internal per-estimator passes and reduce over
-      members with ``mean``/``std``/``max``. ``suggest_method="max"`` is then a
-      genuine max over ensemble members. This relies on TabPFN internal APIs; if
-      a version bump removes them it warns once and falls back to
-      ``"distribution"``.
-    * ``"distribution"``: use TabPFN's public aggregated distribution directly --
-      ``mean`` from it, ``std`` a symmetric quantile half-spread (``q_std``), and
-      the optimistic value the ``q_max`` quantile.
+    passes, hiding the individual members. Instead of that aggregate,
+    :meth:`IMABOTabPFN._predict_members` reconstructs each ensemble member's own
+    mean prediction from TabPFN's internal per-estimator passes, and the
+    acquisition reduces over members with ``mean``/``std``/``max`` -- so
+    ``std`` is the true spread across ensemble members and
+    ``suggest_method="max"`` is a genuine max over them. This relies on TabPFN
+    internal APIs; if a version bump removes them, :meth:`suggest_new` raises
+    (there is no distribution/quantile fallback).
 
 Training-table granularity (``fit_granularity``)
     * ``"arm"`` (default): one row per rewarded arm, at its running mean reward.
@@ -116,9 +112,6 @@ class IMABOTabPFN(IMABO):
         device: str = "auto",
         model_path: str = "auto",
         suggest_method: Literal["ucb", "max", "mean"] = "ucb",
-        ensemble_readout: Literal["members", "distribution"] = "members",
-        q_max: float = 0.9,
-        q_std: float = 0.8414,
         on_suggestion: Callable[[ArmConfig, float, float], None] | None = None,
         on_candidates_scored: (
             Callable[[list[ArmConfig], np.ndarray], None] | None
@@ -139,31 +132,9 @@ class IMABOTabPFN(IMABO):
             model_path: TabPFN checkpoint path ("auto" downloads/uses the
                 default regressor checkpoint). Ignored if ``tabpfn_model`` is
                 given.
-            n_estimators: TabPFN ensemble size (number of forward passes
-                averaged into the predictive distribution). With
-                ``ensemble_readout="members"`` it is also the number of
-                per-member predictions reduced over by the acquisition.
-            ensemble_readout: How the per-candidate ``mean``/``std``/optimistic
-                values are obtained from TabPFN's output:
-                  * ``"members"`` (default): reconstruct each ensemble member's
-                    own point (mean) prediction from TabPFN's internal
-                    per-estimator forward passes and reduce over members with
-                    ``mean``/``std``/``max`` (``preds.mean/std/max(axis=0)``). In
-                    particular ``suggest_method="max"`` becomes a genuine max
-                    over ensemble members, not a quantile. This uses TabPFN
-                    internals (``_iter_forward_executor`` etc.); if a future
-                    TabPFN version removes them it warns once and falls back to
-                    ``"distribution"``.
-                  * ``"distribution"``: use TabPFN's public aggregated predictive
-                    distribution -- ``mean`` from it, ``std`` a quantile
-                    half-spread, and the optimistic value the ``q_max`` quantile.
-                    The only fully public path (see ``q_max``/``q_std``).
-            q_max: (``ensemble_readout="distribution"`` only) Upper quantile used
-                as the optimistic acquisition value for ``suggest_method="max"``.
-            q_std: (``ensemble_readout="distribution"`` only) Upper quantile of
-                the symmetric pair (``q_std`` and ``1 - q_std``) whose
-                half-spread estimates ``std`` for ``suggest_method="ucb"``.
-                Default 0.8414 ~ +1 sigma.
+            n_estimators: TabPFN ensemble size. This is the number of
+                per-member predictions the acquisition reduces over with
+                ``mean``/``std``/``max`` (see :meth:`_predict_members`).
             fit_granularity: What rows the surrogate is fit on (see the module
                 docstring). ``"arm"`` (default) = one row per rewarded arm at
                 its mean reward. ``"pull"`` = one row per individual observation
@@ -223,14 +194,8 @@ class IMABOTabPFN(IMABO):
 
         self._pending_candidates: list[tuple[ArmConfig, float, float]] = []
         self.suggest_method = suggest_method
-        self.ensemble_readout = ensemble_readout
-        self.q_max = q_max
-        self.q_std = q_std
         self.on_suggestion = on_suggestion
         self.on_candidates_scored = on_candidates_scored
-        # Set once, the first time the internal per-member readout is
-        # unavailable, so we warn exactly once instead of on every fit.
-        self._warned_member_fallback = False
 
     def observe(self, reward: float) -> None:
         """Record the reward for the last suggested config.
@@ -357,13 +322,14 @@ class IMABOTabPFN(IMABO):
         "mean")`` exactly (the distribution mean is linear over the member
         mixture), which is the correctness check for this reconstruction.
 
-        With these per-member point predictions, ``suggest_new`` can reduce over
-        members with ``mean``/``std``/``max`` -- so ``suggest_method="max"`` is a
-        real max over ensemble members, no quantile involved.
+        With these per-member point predictions, ``suggest_new`` reduces over
+        members with ``mean``/``std``/``max`` -- so ``std`` is the true spread
+        across ensemble members and ``suggest_method="max"`` is a real max over
+        them, no quantile involved.
 
         Uses TabPFN internal (underscore) APIs. Returns ``None`` (rather than
-        raising) if any of them is missing/changed, so the caller can fall back
-        to the public distribution readout on a TabPFN version bump.
+        raising) if any of them is missing/changed; :meth:`suggest_new` turns
+        that into a clear error, since there is no alternative readout.
         """
         try:
             import torch
@@ -418,30 +384,6 @@ class IMABOTabPFN(IMABO):
         except Exception:
             return None
 
-    def _predict(self, surrogate: Any, X: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return (mean, std, optimistic) per candidate, all in reward units,
-        from TabPFN's public aggregated distribution (``ensemble_readout=
-        "distribution"``).
-
-        TabPFN aggregates its ``n_estimators`` forward passes into one
-        predictive distribution per candidate (already in reward units), so
-        there are no per-member predictions to reduce over here: ``mean`` is the
-        distribution mean, ``std`` is a symmetric quantile half-spread, and the
-        optimistic value is the ``q_max`` quantile (the value
-        ``suggest_method="max"`` ranks on). See the module docstring.
-        """
-        q_lo = round(1.0 - self.q_std, 6)
-        q_hi = round(self.q_std, 6)
-        q_top = round(self.q_max, 6)
-        # Deduplicate while remembering where each requested quantile lands.
-        requested = sorted({q_lo, q_hi, q_top})
-        out = surrogate.predict(X, output_type="main", quantiles=requested)
-        mean = np.asarray(out["mean"], dtype=float)
-        quantiles = {q: np.asarray(v, dtype=float) for q, v in zip(requested, out["quantiles"])}
-        std = np.maximum((quantiles[q_hi] - quantiles[q_lo]) / 2.0, 0.0)
-        optimistic = quantiles[q_top]
-        return mean, std, optimistic
-
     def suggest_new(
         self,
         state: CurrentState,
@@ -469,35 +411,20 @@ class IMABOTabPFN(IMABO):
         candidates = [self.generate_random_config() for _ in range(self.n_candidates)]
         X_candidates = self._configs_to_frame(candidates)
 
-        # Preferred readout: reduce over ensemble members with mean/std/max, so
-        # suggest_method="max" is a real max over members (not a quantile). Fall
-        # back to the public distribution readout only if TabPFN's internal
-        # per-member API is unavailable.
-        preds = (
-            self._predict_members(surrogate, X_candidates)
-            if self.ensemble_readout == "members"
-            else None
-        )
-        if preds is not None:
-            mean = preds.mean(axis=0)
-            std = preds.std(axis=0)
-            optimistic = preds.max(axis=0)
-        else:
-            if self.ensemble_readout == "members" and not self._warned_member_fallback:
-                import warnings
-
-                warnings.warn(
-                    "IMABOTabPFN(ensemble_readout='members') could not read "
-                    "TabPFN's per-ensemble-member predictions (internal API "
-                    "changed?); falling back to the aggregated predictive "
-                    "distribution (q_max/q_std). The 'max' acquisition then "
-                    "ranks on the q_max quantile instead of a true max over "
-                    "ensemble members.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                self._warned_member_fallback = True
-            mean, std, optimistic = self._predict(surrogate, X_candidates)
+        # Reduce over ensemble members with mean/std/max: std is the true spread
+        # across members and suggest_method="max" is a real max over them (not a
+        # quantile). Requires TabPFN's internal per-member outputs.
+        preds = self._predict_members(surrogate, X_candidates)
+        if preds is None:
+            raise RuntimeError(
+                "IMABOTabPFN could not read TabPFN's per-ensemble-member "
+                "predictions -- its internal API (_iter_forward_executor et al.) "
+                "may have changed in this TabPFN version. The acquisition needs "
+                "per-member outputs to compute the ensemble mean/std/max."
+            )
+        mean = preds.mean(axis=0)
+        std = preds.std(axis=0)
+        optimistic = preds.max(axis=0)
         if self.suggest_method == "ucb":
             scores = mean + self.kappa * std
         elif self.suggest_method == "max":
