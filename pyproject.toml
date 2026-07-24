@@ -34,7 +34,7 @@ experiments = [
     "scipy>=1.10",
     "pandas>=2.0",
     "tabpfn>=8.1,<9",
-    "scikit-learn>=1.2",
+    "scikit-learn>=1.6",
 ]
 
 [project.urls]
