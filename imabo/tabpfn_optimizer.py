@@ -3,22 +3,23 @@
 :class:`IMABOTabPFN` keeps IMABO's bandit exploit phase unchanged and drives the
 exploration proposal with a TabPFN-3 regressor: at each explore step it fits
 TabPFN on the observed ``(config, reward)`` table, scores a pool of random
-candidate configs, and proposes the best one under an acquisition rule
-(``suggest_method`` -- ``ucb``/``max``/``mean``). A single fit+predict is
-amortized over ``refit_every`` candidates so the foundation-model call is shared
-across several explore steps.
+candidate configs, and proposes the one maximizing the upper confidence bound
+``mean + kappa * std``. A single fit+predict is amortized over ``refit_every``
+candidates so the foundation-model call is shared across several explore steps.
 
-Ensemble read-out
-    TabPFN's public ``predict`` returns one predictive distribution per
-    candidate that already averages its ``n_estimators`` internal forward
-    passes, hiding the individual members. Instead of that aggregate,
-    :meth:`IMABOTabPFN._predict_members` reconstructs each ensemble member's own
-    mean prediction from TabPFN's internal per-estimator passes, and the
-    acquisition reduces over members with ``mean``/``std``/``max`` -- so
-    ``std`` is the true spread across ensemble members and
-    ``suggest_method="max"`` is a genuine max over them. This relies on TabPFN
-    internal APIs; if a version bump removes them, :meth:`suggest_new` raises
-    (there is no distribution/quantile fallback).
+Acquisition (UCB on the calibrated predictive posterior)
+    TabPFN ensembles ``n_estimators`` estimators, each conditioned on the same
+    table under a different feature ordering/preprocessing, and averages them
+    into a single calibrated predictive distribution over the reward. For each
+    candidate :meth:`IMABOTabPFN._predict_mean_std` reads, from that aggregate
+    distribution (``predict(output_type="full")``):
+
+    * ``mean`` -- the posterior mean;
+    * ``std`` -- the exact standard deviation of the aggregated distribution
+      (its mixture std, which already combines each estimator's own spread and
+      the disagreement between estimators).
+
+    The candidate maximizing ``mean + kappa * std`` is proposed.
 
 Training-table granularity (``fit_granularity``)
     * ``"arm"`` (default): one row per rewarded arm, at its running mean reward.
@@ -111,7 +112,6 @@ class IMABOTabPFN(IMABO):
         tabpfn_kwargs: dict[str, Any] | None = None,
         device: str = "auto",
         model_path: str = "auto",
-        suggest_method: Literal["ucb", "max", "mean"] = "ucb",
         on_suggestion: Callable[[ArmConfig, float, float], None] | None = None,
         on_candidates_scored: (
             Callable[[list[ArmConfig], np.ndarray], None] | None
@@ -132,9 +132,9 @@ class IMABOTabPFN(IMABO):
             model_path: TabPFN checkpoint path ("auto" downloads/uses the
                 default regressor checkpoint). Ignored if ``tabpfn_model`` is
                 given.
-            n_estimators: TabPFN ensemble size. This is the number of
-                per-member predictions the acquisition reduces over with
-                ``mean``/``std``/``max`` (see :meth:`_predict_members`).
+            kappa: UCB exploration weight in ``mean + kappa * std``.
+            n_estimators: TabPFN ensemble size (the number of estimators
+                averaged into the calibrated predictive posterior).
             fit_granularity: What rows the surrogate is fit on (see the module
                 docstring). ``"arm"`` (default) = one row per rewarded arm at
                 its mean reward. ``"pull"`` = one row per individual observation
@@ -193,7 +193,6 @@ class IMABOTabPFN(IMABO):
         self._tabpfn_model = cfg
 
         self._pending_candidates: list[tuple[ArmConfig, float, float]] = []
-        self.suggest_method = suggest_method
         self.on_suggestion = on_suggestion
         self.on_candidates_scored = on_candidates_scored
 
@@ -307,82 +306,22 @@ class IMABOTabPFN(IMABO):
         reg.fit(X, rewards)
         return reg
 
-    def _predict_members(self, surrogate: Any, X: Any) -> np.ndarray | None:
-        """Per-ensemble-member mean predictions, shape ``(n_estimators,
-        n_candidates)`` in reward units.
+    def _predict_mean_std(
+        self, surrogate: Any, X: Any
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Mean and std of TabPFN's calibrated predictive posterior per candidate.
 
-        TabPFN's public ``predict`` averages its ``n_estimators`` forward passes
-        into one distribution before you see anything, so it exposes no
-        per-member point predictions. But internally ``predict`` iterates the
-        members (``_iter_forward_executor``) and *sums* their (border-aligned)
-        distributions before dividing by ``n_estimators``. We run that same
-        iteration ourselves and, for each member, take that member's own
-        predictive-distribution mean via the model's bar-distribution criterion.
-        Averaging these per-member means reproduces ``predict(output_type=
-        "mean")`` exactly (the distribution mean is linear over the member
-        mixture), which is the correctness check for this reconstruction.
-
-        With these per-member point predictions, ``suggest_new`` reduces over
-        members with ``mean``/``std``/``max`` -- so ``std`` is the true spread
-        across ensemble members and ``suggest_method="max"`` is a real max over
-        them, no quantile involved.
-
-        Uses TabPFN internal (underscore) APIs. Returns ``None`` (rather than
-        raising) if any of them is missing/changed; :meth:`suggest_new` turns
-        that into a clear error, since there is no alternative readout.
+        Uses the public ``predict(output_type="full")``, which returns the
+        aggregated predictive distribution (the ``n_estimators`` estimators
+        already averaged into one). ``mean`` is that distribution's mean and
+        ``std`` its exact standard deviation, both in reward units, shape
+        ``(n_candidates,)``.
         """
-        try:
-            import torch
-            from tabpfn.base import ensure_compatible_predict_input_sklearn
-            from tabpfn.preprocessing.clean import (
-                fix_dtypes,
-                process_text_na_dataframe,
-            )
-            from tabpfn.preprocessing.datamodel import FeatureModality
-            from tabpfn.regressor import _logits_to_output
-            from tabpfn.utils import translate_probs_across_borders
-
-            # Mirror predict()'s X preprocessing before feeding the executor:
-            # (1) reconcile columns/dtypes to the fitted schema, (2) fix dtypes,
-            # (3) handle text/NA. Skipping (1) breaks on named-column frames.
-            X = ensure_compatible_predict_input_sklearn(X, surrogate)
-            cat_idx = surrogate.inferred_feature_schema_.indices_for(
-                FeatureModality.CATEGORICAL
-            )
-            Xp = fix_dtypes(X, cat_indices=cat_idx)
-            Xp = process_text_na_dataframe(
-                Xp,
-                ord_encoder=getattr(surrogate, "ordinal_encoder_", None),
-                passthrough_inf=surrogate.get_inference_config().PASSTHROUGH_INF,
-            )
-
-            znorm = surrogate.znorm_space_bardist_
-            raw = surrogate.raw_space_bardist_
-            member_means: list[np.ndarray] = []
-            for borders_t, output in surrogate._iter_forward_executor(
-                Xp, use_inference_mode=True
-            ):
-                # Align this member's distribution to the common border grid
-                # (exactly what predict() does before accumulating), then read
-                # off this single member's mean in raw reward units.
-                transformed = translate_probs_across_borders(
-                    output,
-                    frm=torch.as_tensor(borders_t, device=output.device),
-                    to=znorm.borders.to(output.device),
-                )
-                m = _logits_to_output(
-                    output_type="mean",
-                    logits=transformed.log(),
-                    criterion=raw,
-                    quantiles=[],
-                )
-                member_means.append(np.asarray(m, dtype=float))
-
-            if not member_means:
-                return None
-            return np.stack(member_means, axis=0)
-        except Exception:
-            return None
+        full = surrogate.predict(X, output_type="full")
+        logits, criterion = full["logits"], full["criterion"]
+        mean = criterion.mean(logits).cpu().detach().numpy().astype(float)
+        var = criterion.variance(logits).cpu().detach().numpy().astype(float)
+        return mean, np.sqrt(np.clip(var, 0.0, None))
 
     def suggest_new(
         self,
@@ -393,17 +332,17 @@ class IMABOTabPFN(IMABO):
     ) -> ArmConfig:
         """Propose a new configuration using the TabPFN-3 oracle (explore).
 
-        One TabPFN fit+predict ranks ``n_candidates`` random configs and caches
-        the top ``refit_every`` of them, so the expensive foundation-model call
-        is amortized across several explore steps.
+        One TabPFN fit+predict ranks ``n_candidates`` random configs by the UCB
+        ``mean + kappa * std`` and caches the top ``refit_every`` of them, so the
+        expensive foundation-model call is amortized across several explore steps.
         """
         if len(rewarded_arms) < self.min_arms_for_fit:
             return self.generate_random_config()
 
         if self._pending_candidates:
-            config, mean_pred, max_pred = self._pending_candidates.pop(0)
+            config, mean_pred, ucb_pred = self._pending_candidates.pop(0)
             if self.on_suggestion is not None:
-                self.on_suggestion(config, mean_pred, max_pred)
+                self.on_suggestion(config, mean_pred, ucb_pred)
             return config
 
         surrogate = self._fit_surrogate(rewarded_arms)
@@ -411,45 +350,22 @@ class IMABOTabPFN(IMABO):
         candidates = [self.generate_random_config() for _ in range(self.n_candidates)]
         X_candidates = self._configs_to_frame(candidates)
 
-        # Reduce over ensemble members with mean/std/max: std is the true spread
-        # across members and suggest_method="max" is a real max over them (not a
-        # quantile). Requires TabPFN's internal per-member outputs.
-        preds = self._predict_members(surrogate, X_candidates)
-        if preds is None:
-            raise RuntimeError(
-                "IMABOTabPFN could not read TabPFN's per-ensemble-member "
-                "predictions -- its internal API (_iter_forward_executor et al.) "
-                "may have changed in this TabPFN version. The acquisition needs "
-                "per-member outputs to compute the ensemble mean/std/max."
-            )
-        mean = preds.mean(axis=0)
-        std = preds.std(axis=0)
-        optimistic = preds.max(axis=0)
-        if self.suggest_method == "ucb":
-            scores = mean + self.kappa * std
-        elif self.suggest_method == "max":
-            scores = optimistic
-        elif self.suggest_method == "mean":
-            scores = mean
-        else:
-            raise ValueError(f"Invalid suggest_method: {self.suggest_method}")
+        mean, std = self._predict_mean_std(surrogate, X_candidates)
+        scores = mean + self.kappa * std  # UCB on the calibrated posterior
 
-        # Everything is already in reward units (TabPFN's predictive
-        # distribution lives in raw target space), so no inverse transform is
-        # applied before logging/ranking.
         if self.on_candidates_scored is not None:
             self.on_candidates_scored(candidates, mean)
 
         ranked_idx = np.argsort(scores)[::-1]
         ranked = [
-            (candidates[i], float(mean[i]), float(optimistic[i]))
+            (candidates[i], float(mean[i]), float(scores[i]))
             for i in ranked_idx[: self.refit_every]
         ]
 
-        (chosen, chosen_mean, chosen_max), self._pending_candidates = (
+        (chosen, chosen_mean, chosen_ucb), self._pending_candidates = (
             ranked[0],
             ranked[1:],
         )
         if self.on_suggestion is not None:
-            self.on_suggestion(chosen, chosen_mean, chosen_max)
+            self.on_suggestion(chosen, chosen_mean, chosen_ucb)
         return chosen

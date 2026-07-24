@@ -262,7 +262,6 @@ def run_single_experiment(
             seed=seed,
             tabpfn_model=tabpfn_model,
             beta=BETA,
-            suggest_method="max",
             n_estimators=4,
             fit_granularity=fit_granularity,
             max_num_rows=effective_max_rows,

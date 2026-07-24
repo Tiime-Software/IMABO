@@ -116,7 +116,6 @@ def build_optimizer(
             seed=seed,
             beta=beta,
             tabpfn_model=model,
-            suggest_method="max",
         )
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=SEARCH_SPACE, seed=seed)
