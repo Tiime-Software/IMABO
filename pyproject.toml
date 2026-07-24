@@ -32,6 +32,9 @@ experiments = [
     "aiohttp>=3.8",
     "nest-asyncio>=1.5",
     "scipy>=1.10",
+    "pandas>=2.0",
+    "tabpfn>=8.1,<9",
+    "scikit-learn>=1.2",
 ]
 
 [project.urls]

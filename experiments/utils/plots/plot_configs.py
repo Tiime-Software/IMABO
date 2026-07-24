@@ -81,6 +81,9 @@ ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     "IMOSS-Random": (_PALETTE_BLUE, "o"),  # rf (random oracle; a.k.a. IMOSS)
     "IMOSS-TPE": (_PALETTE_ORANGE, "^"),  # rf, hotpotqa, hpo   (a.k.a. IMABO)
     "IMOSS-TabFM": (_PALETTE_GREEN, "s"),  # rf, hotpotqa
+    "IMOSS-TabPFN": (_PALETTE_GREEN, "s"),  # rf (TabPFN comparison)
+    # Per-pull TabPFN variant (fit on individual pulls, not per-arm means).
+    "IMOSS-TabPFN-pull": (_PALETTE_GREEN, "X"),  # rf (TabPFN per-pull comparison)
     "UCB-AIR": (_PALETTE_VERMILLION, "D"),  # rf, hotpotqa
     "Random": (_PALETTE_BLUE, "p"),  # hotpotqa (no overlap with IMOSS)
     "HOO-T": (_PALETTE_BLUE, "v"),  # hpo
@@ -98,6 +101,8 @@ _ALGORITHM_ALIASES = {
     "imoss-random": "IMOSS-Random",
     "imoss-tpe": "IMOSS-TPE",
     "imoss-tabfm": "IMOSS-TabFM",
+    "imoss-tabpfn": "IMOSS-TabPFN",
+    "imoss-tabpfn-pull": "IMOSS-TabPFN-pull",
     "ucb-air": "UCB-AIR",
     "ucbair": "UCB-AIR",
     "random": "Random",
@@ -450,6 +455,8 @@ _PRETTY_LABELS = {
     "imoss_random": "IMOSS-Random",
     "random_search": "Random Search",
     "imoss_tabfm": "IMOSS-TabFM",
+    "imoss_tabpfn": "IMOSS-TabPFN",
+    "imoss_tabpfn_pull": "IMOSS-TabPFN-pull",
     "ucb_air": "UCB-AIR",
 }
 
@@ -457,6 +464,8 @@ _CANONICAL_ORDER = [
     "IMOSS-Random",
     "IMOSS-TPE",
     "IMOSS-TabFM",
+    "IMOSS-TabPFN",
+    "IMOSS-TabPFN-pull",
     "UCB-AIR",
 ]
 

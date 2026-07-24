@@ -1,4 +1,27 @@
+"""HotpotQA online-HPO experiment (the paper's HotpotQA figure).
+
+One file runs every method, including both foundation-model oracles (Google
+TabFM via ``IMOSS-TABFM`` and Prior-Labs TabPFN-3 via ``IMOSS-TABPFN``). All
+runs are checkpointed and resumable, so reruns skip finished seeds.
+
+Reproduce the figure (each command is resumable; the three baselines are
+model-agnostic and shared by the TabFM and TabPFN figures):
+
+    python -m experiments.hotpotqa_experiment --algorithm IMABO       # IMOSS-TPE
+    python -m experiments.hotpotqa_experiment --algorithm UCB-AIR
+    python -m experiments.hotpotqa_experiment --algorithm Random
+    python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN  # or IMOSS-TABFM
+
+    # then draw the figure (uses --algorithm as the foundation-model series):
+    python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN --plot-only
+
+Requires an ``OPENROUTER_API_KEY`` (in a ``.env`` file or the environment) for
+the LLM calls, and the TabPFN extra for the ``IMOSS-TABPFN`` arm
+(``pip install -e ".[experiments]"``).
+"""
+
 from pathlib import Path
+import argparse
 import csv
 import json
 import os
@@ -10,8 +33,9 @@ from dotenv import load_dotenv
 from enum import Enum
 from typing import Any
 from tqdm import tqdm
-from imabo import IMABO, IMABOTabFM
+from imabo import IMABO, IMABOTabFM, IMABOTabPFN
 from imabo.optimizer import load_tabfm
+from imabo.tabpfn_optimizer import load_tabpfn
 from experiments.baselines.optuna_bandit import OptunaBandit
 from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
@@ -50,6 +74,7 @@ class Algorithm(Enum):
     OPTUNA = "Optuna"  # sequential TPE with k-observation averaging
     UCB_AIR = "UCB-AIR"  # infinitely-many-armed bandit, arm-increasing rule + UCBV
     IMOSS_TABFM = "IMOSS-TABFM"  # IMOSS-TABFM
+    IMOSS_TABPFN = "IMOSS-TABPFN"  # IMOSS with a TabPFN-3 explore oracle
 
 
 def build_optimizer(
@@ -58,16 +83,18 @@ def build_optimizer(
     optuna_k: int = 1,
     beta: float = 0.8,
     tabfm_model: Any = None,
+    tabpfn_model: Any = None,
 ):
     """Construct the optimizer for ``algorithm``.
 
     All returned optimizers expose ``suggest()`` / ``observe(reward)``; use
     :func:`best_config_of` to read the incumbent uniformly across them.
     ``beta`` (the explore/exploit switching exponent) only applies to
-    IMABO/IMABO-noTPE/IMOSS-TABFM. ``tabfm_model`` should be a single
-    pre-loaded model shared across all seeds (see :func:`load_tabfm`) --
+    IMABO/IMABO-noTPE/IMOSS-TABFM/IMOSS-TABPFN. ``tabfm_model`` should be a
+    single pre-loaded model shared across all seeds (see :func:`load_tabfm`) --
     IMOSS-TABFM only builds its own copy via ``load_tabfm()`` as a fallback
-    for standalone/one-off calls.
+    for standalone/one-off calls. ``tabpfn_model`` is the analogous shared
+    handle for IMOSS-TABPFN (see :func:`load_tabpfn`).
     """
     if algorithm == Algorithm.IMABO:
         return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=True, beta=beta)
@@ -80,6 +107,15 @@ def build_optimizer(
             seed=seed,
             beta=beta,
             tabfm_model=model,
+            suggest_method="max",
+        )
+    elif algorithm == Algorithm.IMOSS_TABPFN:
+        model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
+        return IMABOTabPFN(
+            search_space=SEARCH_SPACE,
+            seed=seed,
+            beta=beta,
+            tabpfn_model=model,
             suggest_method="max",
         )
     elif algorithm == Algorithm.RANDOM:
@@ -118,6 +154,7 @@ def algo_label(algorithm: Algorithm, optuna_k: int = 1, beta: float = 0.8) -> st
         Algorithm.IMABO,
         Algorithm.NO_TPE,
         Algorithm.IMOSS_TABFM,
+        Algorithm.IMOSS_TABPFN,
         Algorithm.UCB_AIR,
     ):
         label += f"-beta{beta}"
@@ -228,9 +265,15 @@ def _run_algorithm(
     beta: float = 0.8,
     position: int | None = None,
     tabfm_model: Any = None,
+    tabpfn_model: Any = None,
 ) -> dict:
     optimizer = build_optimizer(
-        algorithm, seed, optuna_k=optuna_k, beta=beta, tabfm_model=tabfm_model
+        algorithm,
+        seed,
+        optuna_k=optuna_k,
+        beta=beta,
+        tabfm_model=tabfm_model,
+        tabpfn_model=tabpfn_model,
     )
     done = []
     if checkpoint_path.exists():
@@ -426,6 +469,7 @@ def run_multiple_experiments(
     seeds = [base_seed + i * 1000 for i in range(n_runs)]
 
     tabfm_model = load_tabfm() if algorithm == Algorithm.IMOSS_TABFM else None
+    tabpfn_model = load_tabpfn() if algorithm == Algorithm.IMOSS_TABPFN else None
 
     splits: dict[int, tuple[list[str], list[str]]] = {}
     for seed in seeds:
@@ -458,6 +502,7 @@ def run_multiple_experiments(
             beta=beta,
             position=i,
             tabfm_model=tabfm_model,
+            tabpfn_model=tabpfn_model,
         )
         with open(run_path, "w") as f:
             json.dump(run_result, f, ensure_ascii=False, indent=4)
@@ -483,17 +528,103 @@ def run_multiple_experiments(
     return all_results
 
 
-if __name__ == "__main__":
-    n_samples = 5000
-    n_runs = 5
-    n_holdout = 500
-    algorithm = Algorithm.IMOSS_TABFM
+def make_plot(foundation: Algorithm, n_samples: int, n_runs: int) -> None:
+    """Draw the paper's HotpotQA figure: the IMOSS family (TPE + a foundation
+    model) vs UCB-AIR and Random.
 
-    run_multiple_experiments(
+    ``foundation`` is the foundation-model series to put in the comparison --
+    ``Algorithm.IMOSS_TABFM`` for the TabFM figure or ``Algorithm.IMOSS_TABPFN``
+    for the TabPFN one. The other three series are model-agnostic, so a single
+    set of baseline checkpoints is reused for either figure. All four series
+    must already be computed (see ``--algorithm`` runs below).
+    """
+    # Head-less: make the plotting helper's trailing ``plt.show()`` a no-op so
+    # the PDF is written without a GUI (an interactive backend would block).
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from experiments.utils.plots.hotpotqa_plot import (
+        ALGO_DISPLAY_NAMES,
+        plot_hotpotqa_results,
+    )
+
+    tpe = algo_label(Algorithm.IMABO, beta=BETA)
+    ucb = algo_label(Algorithm.UCB_AIR, beta=BETA)
+    rnd = algo_label(Algorithm.RANDOM, beta=BETA)
+    fm = algo_label(foundation, beta=BETA)
+    display_overrides = {
+        tpe: ALGO_DISPLAY_NAMES.get(Algorithm.IMABO.value, "IMOSS-TPE"),
+        ucb: ALGO_DISPLAY_NAMES.get(Algorithm.UCB_AIR.value, "UCB-AIR"),
+        fm: ALGO_DISPLAY_NAMES.get(foundation.value, foundation.value),
+    }
+    fig_slug = foundation.value.lower().replace("-", "_")
+    print(f"Drawing HotpotQA paper figure ({display_overrides[fm]})...")
+    plot_hotpotqa_results(
+        algorithms=[tpe, fm, ucb, rnd],
         n_samples=n_samples,
         n_runs=n_runs,
-        n_holdout=n_holdout,
-        algorithm=algorithm,
-        beta=BETA,
-        max_parallel_runs=n_runs,
+        save_fig=True,
+        display_overrides=display_overrides,
+        fig_name=f"hotpotqa_imabo_family_{fig_slug}_{n_samples}samples.pdf",
+        columns=1,
+        conference="aaai",
     )
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--algorithm",
+        default=Algorithm.IMOSS_TABFM.value,
+        choices=[a.value for a in Algorithm],
+        help=(
+            "Which method to run. The paper's HotpotQA figure compares the "
+            "IMOSS family with a foundation-model oracle -- run this once per "
+            "method: 'IMABO' (IMOSS-TPE), 'UCB-AIR', 'Random', and one of "
+            "'IMOSS-TABFM' / 'IMOSS-TABPFN'."
+        ),
+    )
+    p.add_argument("--n-samples", type=int, default=5000, help="online HPO steps (T)")
+    p.add_argument("--n-runs", type=int, default=5, help="independent seeds")
+    p.add_argument("--n-holdout", type=int, default=500, help="held-out eval questions")
+    p.add_argument("--base-seed", type=int, default=42)
+    p.add_argument(
+        "--max-parallel-runs",
+        type=int,
+        default=None,
+        help="seeds evaluated concurrently (default: --n-runs)",
+    )
+    p.add_argument(
+        "--plot",
+        action="store_true",
+        help=(
+            "after computing, draw the paper figure (uses --algorithm as the "
+            "foundation-model series; the other three series must already be "
+            "computed on disk)"
+        ),
+    )
+    p.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="skip computing, only (re)draw the figure",
+    )
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_args()
+    algorithm = Algorithm(args.algorithm)
+
+    if not args.plot_only:
+        run_multiple_experiments(
+            n_samples=args.n_samples,
+            n_runs=args.n_runs,
+            n_holdout=args.n_holdout,
+            base_seed=args.base_seed,
+            algorithm=algorithm,
+            beta=BETA,
+            max_parallel_runs=args.max_parallel_runs or args.n_runs,
+        )
+
+    if args.plot or args.plot_only:
+        make_plot(algorithm, args.n_samples, args.n_runs)

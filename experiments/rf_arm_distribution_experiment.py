@@ -1,7 +1,35 @@
-"""Per-iteration distribution of the arm each oracle would suggest"""
+"""Per-iteration distribution of the arm each oracle would suggest.
 
+One file runs the RF-tabular-bandit experiment for every method, including both
+foundation-model oracles: Google TabFM (``IMOSS-TabFM``) and Prior-Labs
+TabPFN-3 (``IMOSS-TabPFN``). All runs are checkpointed per seed and resumable,
+so reruns skip finished seeds.
+
+Reproduce (each command resumable; the surrogate-free baselines are shared by
+both foundation-model figures):
+
+    # run everything (all algorithms x all benchmarks), then plot both figures:
+    python -m experiments.rf_arm_distribution_experiment
+
+    # run a single method:
+    python -m experiments.rf_arm_distribution_experiment --algorithm IMOSS-TabPFN
+
+    # TabPFN per-pull variant (one row per pull, no per-arm averaging, KV-cache);
+    # written to distinct '..._pull' files/plots so it never clobbers per-arm:
+    python -m experiments.rf_arm_distribution_experiment \
+        --algorithm IMOSS-TabPFN --fit-granularity pull
+
+    # only (re)plot a foundation model's figure from existing result JSONs:
+    python -m experiments.rf_arm_distribution_experiment --plot-only --foundation tabpfn
+
+The TabPFN arm needs the experiment extra (``pip install -e ".[experiments]"``).
+"""
+
+import argparse
 import copy
 import json
+import time
+import warnings
 from collections import Counter
 from enum import Enum
 from pathlib import Path
@@ -17,6 +45,7 @@ from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
 from imabo import IMABO
 from imabo.memory import config_to_key
 from imabo.optimizer import IMABOTabFM, load_tabfm
+from imabo.tabpfn_optimizer import IMABOTabPFN, load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite_arm_distribution"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -26,17 +55,51 @@ N_SHADOW = 10
 N_JOBS = 8
 
 
+def _silence_known_warnings() -> None:
+    """Mute the noisy, harmless ``FutureWarning`` TabPFN's internal
+    ``ColumnTransformer`` raises on every fit (about ``force_int_remainder_cols``
+    in scikit-learn >=1.6) -- one block per TabPFN fit, saying nothing about the
+    experiment. Set as a process-global filter (safe under the joblib threading
+    backend); re-applied after ``load_tabpfn`` since importing tabpfn/sklearn can
+    reset the warnings registry. A no-op for the non-TabPFN algorithms.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        message=r"The format of the columns of the 'remainder' transformer",
+        category=FutureWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=FutureWarning,
+        module=r"sklearn\.compose\._column_transformer",
+    )
+
+
+_silence_known_warnings()
+
+
 class Algorithm(Enum):
     IMOSS_TPE = "IMOSS-TPE"
     IMOSS = "IMOSS-Random"
     RANDOM = "Random Search"
     IMOSS_TABFM = "IMOSS-TabFM"
+    IMOSS_TABPFN = "IMOSS-TabPFN"
     UCB_AIR = "UCB-AIR"
 
 
-def algo_slug(algorithm: Algorithm) -> str:
-    """Filesystem-safe label, used for per-algorithm result filenames."""
-    return algorithm.value.lower().replace(" ", "_").replace("-", "_")
+def algo_slug(algorithm: Algorithm, fit_granularity: str = "arm") -> str:
+    """Filesystem-safe label, used for per-algorithm result filenames.
+
+    The per-pull TabPFN variant gets a distinct ``..._pull`` slug so its result
+    JSONs (and the plotted ``IMOSS-TabPFN-pull`` series) live alongside -- and
+    never clobber -- the default per-arm TabPFN results in the same directory.
+    The surrogate-free arms are unaffected by granularity, so they keep their
+    usual slugs and are reused across both modes and both foundation models.
+    """
+    slug = algorithm.value.lower().replace(" ", "_").replace("-", "_")
+    if algorithm == Algorithm.IMOSS_TABPFN and fit_granularity == "pull":
+        slug += "_pull"
+    return slug
 
 
 def benchmark_tag(bm_id: int, noise: bool) -> str:
@@ -50,6 +113,7 @@ def build_optimizer(
     search_space: dict[str, Any],
     seed: int,
     tabfm_model: Any = None,
+    tabpfn_model: Any = None,
 ):
     if algorithm == Algorithm.IMOSS_TPE:
         return IMABO(
@@ -74,6 +138,14 @@ def build_optimizer(
             search_space=search_space,
             seed=seed,
             tabfm_model=model,
+            beta=BETA,
+        )
+    elif algorithm == Algorithm.IMOSS_TABPFN:
+        model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
+        return IMABOTabPFN(
+            search_space=search_space,
+            seed=seed,
+            tabpfn_model=model,
             beta=BETA,
         )
     elif algorithm == Algorithm.UCB_AIR:
@@ -132,12 +204,14 @@ def _shadow_copy(opt: Any) -> Any:
     weights on every one of thousands of iterations would be
     both unnecessary (it's never mutated) and far too slow. Pre-seeding the
     deepcopy memo with its id makes copy.deepcopy skip it and reuse the same
-    reference in the copy instead.
+    reference in the copy instead. IMABOTabPFN's `_tabpfn_model` (a small shared
+    settings dict) is skipped the same way, for parity.
     """
     memo = {}
-    model = getattr(opt, "_tabfm_model", None)
-    if model is not None:
-        memo[id(model)] = model
+    for attr in ("_tabfm_model", "_tabpfn_model"):
+        model = getattr(opt, attr, None)
+        if model is not None:
+            memo[id(model)] = model
     return copy.deepcopy(opt, memo)
 
 
@@ -147,14 +221,25 @@ def run_single_experiment(
     algorithm: Algorithm,
     seed: int = 42,
     tabfm_model: Any = None,
+    tabpfn_model: Any = None,
     n_shadow: int = N_SHADOW,
     oracle_probe_every: int = ORACLE_PROBE_EVERY,
+    fit_granularity: str = "arm",
+    max_num_rows: int | None = None,
 ) -> dict:
     """Run one seed, recording every `oracle_probe_every` iterations the
     mean/std of the true reward of `n_shadow` independent draws from the
     oracle's raw proposal at that state (see _shadow_copy, _oracle_propose),
     alongside the real-trajectory fields (regrets, simple regret, suggestion
     counts).
+
+    The surrogate diagnostics (the ``tabfm_*`` fields) fire for either
+    foundation-model oracle -- IMOSS-TabFM or IMOSS-TabPFN -- and keep the
+    ``tabfm_*`` names verbatim so the plotting code reads both unchanged.
+    ``fit_granularity`` / ``max_num_rows`` only affect IMOSS-TabPFN (see
+    :class:`imabo.tabpfn_optimizer.IMABOTabPFN`): ``"arm"`` (default) fits one
+    row per arm at its mean reward, ``"pull"`` one row per individual pull (no
+    averaging, KV-cache on).
     """
     if algorithm == Algorithm.IMOSS_TABFM:
         opt = IMABOTabFM(
@@ -165,9 +250,32 @@ def run_single_experiment(
             suggest_method="max",
             n_estimators=4,
         )
+    elif algorithm == Algorithm.IMOSS_TABPFN:
+        # Per-pull tables grow to O(#pulls) rows, so lift the default in-context
+        # row cap well above the per-arm default (200) unless told otherwise.
+        if max_num_rows is None:
+            effective_max_rows = 10000 if fit_granularity == "pull" else 200
+        else:
+            effective_max_rows = max_num_rows
+        opt = IMABOTabPFN(
+            search_space=bench.get_search_space(),
+            seed=seed,
+            tabpfn_model=tabpfn_model,
+            beta=BETA,
+            suggest_method="max",
+            n_estimators=4,
+            fit_granularity=fit_granularity,
+            max_num_rows=effective_max_rows,
+        )
     else:
-        opt = build_optimizer(algorithm, bench.get_search_space(), seed, tabfm_model)
+        opt = build_optimizer(
+            algorithm, bench.get_search_space(), seed, tabfm_model, tabpfn_model
+        )
     param_names = sorted(bench.get_search_space().keys())
+
+    # Both foundation-model oracles log the surrogate diagnostics below (under
+    # the shared ``tabfm_*`` field names).
+    is_surrogate = algorithm in (Algorithm.IMOSS_TABFM, Algorithm.IMOSS_TABPFN)
 
     # UCB-AIR (experiments/baselines/ucb_air.py) has no oracle/exploit split --
     # it's kept in this experiment for the shared cumulative-regret comparison
@@ -296,45 +404,29 @@ def run_single_experiment(
         "shadow_reward_mean": shadow_reward_mean if has_oracle else None,
         "shadow_reward_std": shadow_reward_std if has_oracle else None,
         "tabfm_suggestion_probe_iterations": (
-            tabfm_suggestion_probe_iterations
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_suggestion_probe_iterations if is_surrogate else None
         ),
         "tabfm_suggestion_predicted_rewards": (
-            tabfm_suggestion_predicted_rewards
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_suggestion_predicted_rewards if is_surrogate else None
         ),
         "tabfm_suggestion_predicted_max_rewards": (
-            tabfm_suggestion_predicted_max_rewards
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_suggestion_predicted_max_rewards if is_surrogate else None
         ),
         "tabfm_suggestion_true_rewards": (
-            tabfm_suggestion_true_rewards
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_suggestion_true_rewards if is_surrogate else None
         ),
-        "tabfm_train_rewards": (
-            tabfm_train_rewards if algorithm == Algorithm.IMOSS_TABFM else None
-        ),
+        "tabfm_train_rewards": (tabfm_train_rewards if is_surrogate else None),
         "tabfm_candidate_probe_iterations": (
-            tabfm_candidate_probe_iterations
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_candidate_probe_iterations if is_surrogate else None
         ),
         "tabfm_candidate_configs": (
-            tabfm_candidate_configs if algorithm == Algorithm.IMOSS_TABFM else None
+            tabfm_candidate_configs if is_surrogate else None
         ),
         "tabfm_candidate_predicted_rewards": (
-            tabfm_candidate_predicted_rewards
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_candidate_predicted_rewards if is_surrogate else None
         ),
         "tabfm_candidate_true_rewards": (
-            tabfm_candidate_true_rewards
-            if algorithm == Algorithm.IMOSS_TABFM
-            else None
+            tabfm_candidate_true_rewards if is_surrogate else None
         ),
         "best_config": best,
         "best_reward": best_reward,
@@ -362,12 +454,16 @@ def run_multiple_experiments(
     n_runs: int = 10,
     base_seed: int = 42,
     tabfm_model: Any = None,
+    tabpfn_model: Any = None,
     n_jobs: int = N_JOBS,
+    fit_granularity: str = "arm",
+    max_num_rows: int | None = None,
 ) -> list[dict]:
     """Run multiple independent runs of a single algorithm, checkpointed per
     run."""
     stem = (
-        f"{benchmark_tag(bench.bm_id, True)}_{algo_slug(algorithm)}_{n_iterations}iters"
+        f"{benchmark_tag(bench.bm_id, True)}"
+        f"_{algo_slug(algorithm, fit_granularity)}_{n_iterations}iters"
     )
 
     all_results: list[dict | None] = [None] * n_runs
@@ -391,6 +487,9 @@ def run_multiple_experiments(
             algorithm,
             seed=seed,
             tabfm_model=tabfm_model,
+            tabpfn_model=tabpfn_model,
+            fit_granularity=fit_granularity,
+            max_num_rows=max_num_rows,
         )
         with open(RESULT_DIR / f"{stem}_run{i}.json", "w") as f:
             json.dump(result, f)
@@ -412,13 +511,24 @@ def run_experiment(
     base_seed,
     n_iter,
     algorithm: Algorithm,
+    tabfm_model: Any = None,
+    tabpfn_model: Any = None,
     n_jobs: int = N_JOBS,
+    fit_granularity: str = "arm",
+    max_num_rows: int | None = None,
 ) -> None:
-    tabfm_model = load_tabfm() if algorithm == Algorithm.IMOSS_TABFM else None
-    if tabfm_model is not None:
+    # Load/warm up the surrogate model once (both loaders are memoized, so
+    # passing a preloaded model in from the caller avoids re-warming per bench).
+    if algorithm == Algorithm.IMOSS_TABFM and tabfm_model is None:
+        tabfm_model = load_tabfm()
         print("Loaded TabFM model (once, reused across all runs/budgets).")
+    if algorithm == Algorithm.IMOSS_TABPFN and tabpfn_model is None:
+        tabpfn_model = load_tabpfn()
+        _silence_known_warnings()  # importing tabpfn/sklearn can reset filters
+        print("TabPFN-3 ready (checkpoint cached; reused across all runs/budgets).")
 
-    print(f"\n{algorithm.value}: T={n_iter}, {n_runs} runs...")
+    gran = f" [{fit_granularity}]" if algorithm == Algorithm.IMOSS_TABPFN else ""
+    print(f"\n{algorithm.value}{gran}: T={n_iter}, {n_runs} runs...")
     run_multiple_experiments(
         bench,
         n_iter,
@@ -426,32 +536,232 @@ def run_experiment(
         n_runs=n_runs,
         base_seed=base_seed,
         tabfm_model=tabfm_model,
+        tabpfn_model=tabpfn_model,
         n_jobs=n_jobs,
+        fit_granularity=fit_granularity,
+        max_num_rows=max_num_rows,
     )
 
 
-if __name__ == "__main__":
-    n_runs = 10
-    base_seed = 42
-    n_iter = 5000
-    # Three benchmarks spanning reward-noise regimes: segment (clean),
-    # credit-g (noisy), numerai28.6 (hard).
-    bm_ids = [146822, 31, 167120]
-    # The IMOSS proposal-oracle family for the oracle-distribution shadow
-    # probe, plus UCB-AIR kept only for the shared cumulative-regret grid
-    # (run_single_experiment skips the shadow probe for it -- see has_oracle).
-    algorithms = [
-        Algorithm.IMOSS,
-        Algorithm.IMOSS_TPE,
-        Algorithm.IMOSS_TABFM,
-        Algorithm.UCB_AIR,
-    ]
+# The IMOSS proposal-oracle family for the oracle-distribution shadow probe,
+# plus UCB-AIR kept only for the shared cumulative-regret grid
+# (run_single_experiment skips the shadow probe for it -- see has_oracle). Both
+# foundation-model oracles are included so a single run reproduces both figures.
+_DEFAULT_ALGORITHMS = [
+    Algorithm.IMOSS,
+    Algorithm.IMOSS_TPE,
+    Algorithm.IMOSS_TABFM,
+    Algorithm.IMOSS_TABPFN,
+    Algorithm.UCB_AIR,
+]
 
-    for bm_id in bm_ids:
-        bench = RFTabularFiniteBenchmark(bm_id=bm_id)
-        print(
-            f"RF tabular finite benchmark (OpenML task {bm_id}): "
-            f"{bench.n_arms} arms, best val_acc={bench.max_value:.4f}"
-        )
-        for algorithm in algorithms:
-            run_experiment(bench, n_runs, base_seed, n_iter, algorithm)
+
+def make_plots(
+    benchmarks,
+    n_iterations,
+    foundation: str = "tabpfn",
+    fit_granularity: str = "arm",
+    save_fig: bool = True,
+) -> None:
+    """Draw the paper's RF figures for one foundation-model oracle: the static
+    reward-landscape structure grid (benchmark-only), the combined
+    cumulative-regret + oracle-proposal-quality grid, and the surrogate
+    suggested-config MSE grid.
+
+    ``foundation`` selects the foundation-model series ("tabfm" or "tabpfn");
+    the three surrogate-free baselines are shared by both figures. For "tabpfn"
+    with ``fit_granularity="pull"`` the per-pull series and ``..._pull``
+    filenames are used, so they sit next to (never overwrite) the per-arm ones.
+    """
+    # Head-less: make the plotting helpers' trailing ``plt.show()`` a no-op so
+    # every PDF is written without a GUI (an interactive backend would block).
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from experiments.utils.plots.rf_arm_distribution_plot import (
+        _load_suggestion_mse_traces,
+        _plot_suggestion_metric_grid,
+        plot_regret_and_oracle_grid,
+    )
+    from experiments.utils.plots.rf_landscape_plot import (
+        plot_landscape_structure_grid,
+    )
+
+    is_tabpfn = foundation == "tabpfn"
+    is_pull = is_tabpfn and fit_granularity == "pull"
+    fm_label = (
+        "IMOSS-TabPFN-pull"
+        if is_pull
+        else "IMOSS-TabPFN"
+        if is_tabpfn
+        else "IMOSS-TabFM"
+    )
+    suffix = "_pull" if is_pull else ""
+    regret_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label, "UCB-AIR"]
+    oracle_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label]
+
+    print("Generating RF reward-landscape structure grid (benchmark-only)...")
+    plot_landscape_structure_grid(
+        bm_ids=tuple(int(tag.removeprefix("rf")) for tag in benchmarks),
+        save_fig=save_fig,
+    )
+
+    print(f"Generating combined regret + oracle-proposal-quality grid ({fm_label})...")
+    plot_regret_and_oracle_grid(
+        benchmarks=benchmarks,
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        regret_algorithms=regret_algos,
+        oracle_algorithms=oracle_algos,
+        out_name=f"regret_and_oracle_grid_{foundation}{suffix}",
+    )
+
+    print(f"Generating {foundation} suggested-config MSE grid...")
+    _plot_suggestion_metric_grid(
+        _load_suggestion_mse_traces,
+        f"{'TabPFN' if is_tabpfn else 'TabFM'} Suggested-Config MSE",
+        f"{foundation}_suggestion_mse_grid{suffix}",
+        benchmarks=benchmarks,
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        log_scale=True,
+    )
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--algorithm",
+        default="all",
+        choices=["all"] + [a.value for a in Algorithm],
+        help="method to run (default: 'all' -- every algorithm x benchmark)",
+    )
+    p.add_argument("--n-runs", type=int, default=10, help="independent seeds per algorithm")
+    p.add_argument("--n-iter", type=int, default=5000, help="iterations (T) per run")
+    p.add_argument("--base-seed", type=int, default=42)
+    p.add_argument("--n-jobs", type=int, default=N_JOBS, help="parallel run workers")
+    p.add_argument(
+        "--benchmarks",
+        type=int,
+        nargs="+",
+        default=[146822, 31, 167120],
+        help="OpenML task ids: segment=146822, credit-g=31, numerai28.6=167120",
+    )
+    p.add_argument(
+        "--fit-granularity",
+        choices=["arm", "pull"],
+        default="arm",
+        help=(
+            "IMOSS-TabPFN training-table granularity: 'arm' (default, paper) "
+            "fits one row per arm at its mean reward; 'pull' fits one row per "
+            "individual pull (no averaging) with TabPFN's KV-cache. 'pull' "
+            "results go to distinct '..._pull' files/plots."
+        ),
+    )
+    p.add_argument(
+        "--max-num-rows",
+        type=int,
+        default=None,
+        help="TabPFN in-context row cap (default: 200 for arm, 10000 for pull).",
+    )
+    p.add_argument(
+        "--foundation",
+        choices=["tabfm", "tabpfn"],
+        default=None,
+        help=(
+            "which foundation-model figure to (re)plot; default: inferred from "
+            "--algorithm, or both when --algorithm all."
+        ),
+    )
+    p.add_argument(
+        "--plot", action="store_true", help="after running, draw the paper figure(s)"
+    )
+    p.add_argument(
+        "--plot-only", action="store_true", help="skip running, only (re)plot"
+    )
+    p.add_argument("--no-plot", action="store_true", help="run but skip plotting")
+    p.add_argument(
+        "--quick",
+        action="store_true",
+        help="fast smoke test: T=60, 2 runs, credit-g only",
+    )
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_args()
+
+    if args.quick:
+        n_runs, n_iter, bm_ids = 2, 60, [31]
+    else:
+        n_runs, n_iter, bm_ids = args.n_runs, args.n_iter, args.benchmarks
+
+    bench_tags = tuple(f"rf{bm_id}" for bm_id in bm_ids)
+    algorithms = (
+        list(_DEFAULT_ALGORITHMS)
+        if args.algorithm == "all"
+        else [Algorithm(args.algorithm)]
+    )
+
+    if not args.plot_only:
+        # Warm up each needed surrogate model once, reused across all benchmarks.
+        tabfm_model = load_tabfm() if Algorithm.IMOSS_TABFM in algorithms else None
+        if tabfm_model is not None:
+            print("Loaded TabFM model (once, reused across all runs/budgets).")
+        tabpfn_model = None
+        if Algorithm.IMOSS_TABPFN in algorithms:
+            tabpfn_model = load_tabpfn()
+            _silence_known_warnings()
+            print("TabPFN-3 ready (checkpoint cached; reused across all runs/budgets).")
+
+        total_tasks = len(bm_ids) * len(algorithms)
+        start = time.time()
+        with tqdm(total=total_tasks, desc="benchmark x algorithm", unit="task") as bar:
+            for bm_id in bm_ids:
+                bench = RFTabularFiniteBenchmark(bm_id=bm_id)
+                print(
+                    f"\nRF tabular finite benchmark (OpenML task {bm_id}): "
+                    f"{bench.n_arms} arms, best val_acc={bench.max_value:.4f}"
+                )
+                for algorithm in algorithms:
+                    run_experiment(
+                        bench,
+                        n_runs,
+                        args.base_seed,
+                        n_iter,
+                        algorithm,
+                        tabfm_model=tabfm_model,
+                        tabpfn_model=tabpfn_model,
+                        n_jobs=args.n_jobs,
+                        fit_granularity=args.fit_granularity,
+                        max_num_rows=args.max_num_rows,
+                    )
+                    bar.update(1)
+                    done, total = bar.n, bar.total
+                    elapsed = time.time() - start
+                    eta = elapsed / done * (total - done) if done else 0.0
+                    bar.set_postfix_str(f"elapsed {elapsed/60:.1f}m, eta {eta/60:.1f}m")
+
+    # Plot when asked (--plot/--plot-only) or by default after an "all" run.
+    want_plot = not args.no_plot and (
+        args.plot or args.plot_only or args.algorithm == "all"
+    )
+    if want_plot:
+        if args.foundation is not None:
+            foundations = [args.foundation]
+        elif args.algorithm == "all":
+            foundations = ["tabfm", "tabpfn"]
+        elif args.algorithm == Algorithm.IMOSS_TABFM.value:
+            foundations = ["tabfm"]
+        elif args.algorithm == Algorithm.IMOSS_TABPFN.value:
+            foundations = ["tabpfn"]
+        else:
+            foundations = []  # a surrogate-free run defines no figure on its own
+        for foundation in foundations:
+            make_plots(
+                bench_tags,
+                n_iter,
+                foundation=foundation,
+                fit_granularity=args.fit_granularity,
+                save_fig=True,
+            )

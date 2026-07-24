@@ -34,7 +34,12 @@ set_research_style()
 _IMOSS_FAMILY = ["IMOSS-Random", "IMOSS-TPE", "IMOSS-TabFM"]
 ALL = _IMOSS_FAMILY + ["UCB-AIR"]
 
-_ORACLE_LABELS = {"IMOSS-Random": "Random", "IMOSS-TPE": "TPE", "IMOSS-TabFM": "TabFM"}
+_ORACLE_LABELS = {
+    "IMOSS-Random": "Random",
+    "IMOSS-TPE": "TPE",
+    "IMOSS-TabFM": "TabFM",
+    "IMOSS-TabPFN": "TabPFN",
+}
 
 
 def _load_trace_field(
@@ -1605,6 +1610,7 @@ def plot_regret_and_oracle_grid(
     smoothing_span=1,
     columns=2,
     conference="aaai",
+    out_name="regret_and_oracle_grid",
 ):
     """Paper figure: cumulative regret (top row) and oracle proposal quality
     (bottom row), one column per benchmark, per-column x-axis -- combines
@@ -1778,7 +1784,7 @@ def plot_regret_and_oracle_grid(
 
     if save_fig:
         tag = "_".join(benchmarks)
-        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_regret_and_oracle_grid.pdf"
+        out_path = RESULTS_DIR / "paper_plots" / f"{tag}_{out_name}.pdf"
         save_figure(out_path, bbox_inches="tight")
 
     plt.show()

@@ -115,7 +115,14 @@ The `experiments/` directory contains all scripts used in the paper. Install the
 pip install -e ".[experiments]"
 ```
 
-Each experiment follows the same two-step workflow: **run** the experiment to generate CSVs under `results/`, then **plot** from those CSVs.
+Each experiment follows the same two-step workflow: run the experiment to generate results under `results/`, then plot from those results. The two foundation-model experiments run every method (including the `IMOSS-TabFM` and `IMOSS-TabPFN` oracles) and plot in a single script (add `--plot-only` to only replot). HotpotQA needs an `OPENROUTER_API_KEY` in a `.env` file.
+
+```bash
+python -m experiments.rf_arm_distribution_experiment   # RF/HPOBench, then plots
+python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN   # or IMOSS-TABFM
+```
+
+Pass `--help` to either script for the options.
 
 ---
 
