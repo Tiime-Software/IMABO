@@ -84,6 +84,8 @@ def build_optimizer(
     beta: float = 0.8,
     tabfm_model: Any = None,
     tabpfn_model: Any = None,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ):
     """Construct the optimizer for ``algorithm``.
 
@@ -116,6 +118,8 @@ def build_optimizer(
             seed=seed,
             beta=beta,
             tabpfn_model=model,
+            acquisition=acquisition,
+            quantile=quantile,
         )
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=SEARCH_SPACE, seed=seed)
@@ -265,6 +269,8 @@ def _run_algorithm(
     position: int | None = None,
     tabfm_model: Any = None,
     tabpfn_model: Any = None,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ) -> dict:
     optimizer = build_optimizer(
         algorithm,
@@ -273,6 +279,8 @@ def _run_algorithm(
         beta=beta,
         tabfm_model=tabfm_model,
         tabpfn_model=tabpfn_model,
+        acquisition=acquisition,
+        quantile=quantile,
     )
     done = []
     if checkpoint_path.exists():
@@ -454,6 +462,8 @@ def run_multiple_experiments(
     optuna_k: int = 1,
     beta: float = 0.8,
     max_parallel_runs: int = 5,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ) -> list[dict]:
     # Built once; the Dense index spans the full corpus, so each run only
     # re-samples its (train, holdout) split per seed (no embedding rebuild).
@@ -502,6 +512,8 @@ def run_multiple_experiments(
             position=i,
             tabfm_model=tabfm_model,
             tabpfn_model=tabpfn_model,
+            acquisition=acquisition,
+            quantile=quantile,
         )
         with open(run_path, "w") as f:
             json.dump(run_result, f, ensure_ascii=False, indent=4)
@@ -594,6 +606,27 @@ def _parse_args() -> argparse.Namespace:
         help="seeds evaluated concurrently (default: --n-runs)",
     )
     p.add_argument(
+        "--acquisition",
+        choices=["ucb", "quantile"],
+        default="quantile",
+        help=(
+            "IMOSS-TABPFN acquisition (see imabo.tabpfn_optimizer.IMABOTabPFN): "
+            "'quantile' (default) ranks candidates on the --quantile level of "
+            "TabPFN's predictive distribution, 'ucb' on mean + kappa*std at "
+            "kappa = Phi^-1(--quantile)."
+        ),
+    )
+    p.add_argument(
+        "--quantile",
+        type=float,
+        default=0.99,
+        help=(
+            "IMOSS-TABPFN exploration level in (0,1): the quantile of "
+            "TabPFN's predictive distribution ranked on (default 0.99); for "
+            "--acquisition ucb it is converted to kappa = Phi^-1(quantile)."
+        ),
+    )
+    p.add_argument(
         "--plot",
         action="store_true",
         help=(
@@ -623,6 +656,8 @@ if __name__ == "__main__":
             algorithm=algorithm,
             beta=BETA,
             max_parallel_runs=args.max_parallel_runs or args.n_runs,
+            acquisition=args.acquisition,
+            quantile=args.quantile,
         )
 
     if args.plot or args.plot_only:

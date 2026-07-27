@@ -3,23 +3,35 @@
 :class:`IMABOTabPFN` keeps IMABO's bandit exploit phase unchanged and drives the
 exploration proposal with a TabPFN-3 regressor: at each explore step it fits
 TabPFN on the observed ``(config, reward)`` table, scores a pool of random
-candidate configs, and proposes the one maximizing the upper confidence bound
-``mean + kappa * std``. A single fit+predict is amortized over ``refit_every``
-candidates so the foundation-model call is shared across several explore steps.
+candidate configs, and proposes the one maximizing an upper confidence bound
+read from TabPFN's predictive distribution (``acquisition`` -- moment-based
+``"ucb"`` or ``"quantile"``). A single fit+predict is amortized over
+``refit_every`` candidates so the foundation-model call is shared across
+several explore steps.
 
-Acquisition (UCB on the calibrated predictive posterior)
+Acquisition (two UCB readouts of the calibrated predictive posterior)
     TabPFN ensembles ``n_estimators`` estimators, each conditioned on the same
     table under a different feature ordering/preprocessing, and averages them
-    into a single calibrated predictive distribution over the reward. For each
-    candidate :meth:`IMABOTabPFN._predict_mean_std` reads, from that aggregate
-    distribution (``predict(output_type="full")``):
+    into a single calibrated predictive distribution per candidate
+    (``predict(output_type="full")``). Two ways to score a candidate from it:
 
-    * ``mean`` -- the posterior mean;
-    * ``std`` -- the exact standard deviation of the aggregated distribution
-      (its mixture std, which already combines each estimator's own spread and
-      the disagreement between estimators).
+    * ``acquisition="quantile"`` (default): the ``quantile`` level of the
+      distribution, ``F^-1(quantile)`` -- the deterministic quantile form of
+      UCB (GIT-BO, arXiv:2505.20685), ranking on the 0.99 quantile by
+      default. Off-Gaussian, the quantile readout is insensitive to skew and
+      heavy tails of the predicted density. See
+      :meth:`IMABOTabPFN._predict_mean_quantile`.
+    * ``acquisition="ucb"``: ``mean + kappa * std``, where ``mean`` is the
+      distribution mean and ``std`` its exact standard deviation (the mixture
+      std, which already combines each estimator's own spread and the
+      disagreement between estimators). See
+      :meth:`IMABOTabPFN._predict_mean_std`.
 
-    The candidate maximizing ``mean + kappa * std`` is proposed.
+    ``quantile`` is the single exploration knob for both rules: the UCB
+    weight is derived from it assuming a Gaussian posterior,
+    ``kappa = Phi^-1(quantile)`` (see :func:`quantile_to_kappa`), for which
+    the two rules coincide exactly -- e.g. ``q=0.841 -> kappa~=1``,
+    ``q=0.975 -> kappa~=1.96``, ``q=0.99 -> kappa~=2.33``.
 
 Training-table granularity (``fit_granularity``)
     * ``"arm"`` (default): one row per rewarded arm, at its running mean reward.
@@ -32,6 +44,9 @@ Training-table granularity (``fit_granularity``)
 
 from __future__ import annotations
 
+import contextlib
+import threading
+from statistics import NormalDist
 from typing import Any, Callable, Literal
 
 import numpy as np
@@ -45,6 +60,43 @@ from imabo.memory import (
 )
 from imabo.optimizer import IMABO
 from imabo.types import ArmConfig, ArmKey
+
+
+# Concurrent TabPFN fit/predict from multiple threads hard-crashes the whole
+# process (no Python traceback) on Apple-silicon Metal/MPS, so on that device
+# the oracle's fit+score block is serialized across threads. On CUDA/CPU the
+# calls are left fully parallel.
+_TABPFN_MPS_LOCK = threading.Lock()
+
+
+def _tabpfn_serialization_lock() -> Any:
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            return _TABPFN_MPS_LOCK
+    except Exception:
+        pass
+    return contextlib.nullcontext()
+
+
+def kappa_to_quantile(kappa: float) -> float:
+    """Quantile level equivalent to ``mean + kappa * std`` under normality.
+
+    ``Phi(kappa)`` (standard normal CDF), clamped away from 0/1 so the
+    bar-distribution ``icdf`` always gets a valid interior probability.
+    """
+    q = NormalDist().cdf(kappa)
+    return min(max(q, 1e-6), 1.0 - 1e-6)
+
+
+def quantile_to_kappa(quantile: float) -> float:
+    """UCB weight equivalent to ranking on ``quantile`` under normality.
+
+    ``Phi^-1(quantile)`` (standard normal inverse CDF) -- e.g. 0.841 -> ~1,
+    0.975 -> ~1.96, 0.99 -> ~2.33.
+    """
+    return NormalDist().inv_cdf(min(max(quantile, 1e-6), 1.0 - 1e-6))
 
 
 def load_tabpfn(
@@ -101,7 +153,8 @@ class IMABOTabPFN(IMABO):
         memory: Memory | None = None,
         min_arms_for_fit: int = 10,
         n_candidates: int = 100,
-        kappa: float = 1.0,
+        acquisition: Literal["ucb", "quantile"] = "quantile",
+        quantile: float = 0.99,
         n_estimators: int = 4,
         max_num_rows: int | None = 200,
         refit_every: int = 10,
@@ -132,7 +185,18 @@ class IMABOTabPFN(IMABO):
             model_path: TabPFN checkpoint path ("auto" downloads/uses the
                 default regressor checkpoint). Ignored if ``tabpfn_model`` is
                 given.
-            kappa: UCB exploration weight in ``mean + kappa * std``.
+            acquisition: How candidates are scored from TabPFN's predictive
+                distribution (see the module docstring): ``"quantile"``
+                (default) ranks on the ``quantile`` level of the distribution;
+                ``"ucb"`` ranks on ``mean + kappa * std`` with
+                ``kappa = Phi^-1(quantile)``.
+            quantile: The single exploration knob, in (0, 1), shared by both
+                acquisitions: the level ranked on when
+                ``acquisition="quantile"``, and (via the normality conversion
+                ``kappa = Phi^-1(quantile)``, see :func:`quantile_to_kappa`)
+                the UCB weight for ``acquisition="ucb"``. The default 0.99 is
+                the best and most seed-stable setting in our RF/HPO comparison
+                (GIT-BO's ablations favor the nearby 0.95-0.975).
             n_estimators: TabPFN ensemble size (the number of estimators
                 averaged into the calibrated predictive posterior).
             fit_granularity: What rows the surrogate is fit on (see the module
@@ -163,9 +227,14 @@ class IMABOTabPFN(IMABO):
             use_tpe=True,
             memory=memory,
         )
+        if acquisition not in ("ucb", "quantile"):
+            raise ValueError(f"Invalid acquisition: {acquisition!r}")
+        if not 0.0 < quantile < 1.0:
+            raise ValueError(f"quantile must be in (0, 1), got {quantile}")
         self.min_arms_for_fit = min_arms_for_fit
         self.n_candidates = n_candidates
-        self.kappa = kappa
+        self.acquisition = acquisition
+        self.quantile = quantile
         self.n_estimators = n_estimators
         self.max_num_rows = max_num_rows
         self.refit_every = refit_every
@@ -323,6 +392,24 @@ class IMABOTabPFN(IMABO):
         var = criterion.variance(logits).cpu().detach().numpy().astype(float)
         return mean, np.sqrt(np.clip(var, 0.0, None))
 
+    def _predict_mean_quantile(
+        self, surrogate: Any, X: Any
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Mean and ``self.quantile`` level of TabPFN's predictive posterior.
+
+        Same aggregated distribution as :meth:`_predict_mean_std`
+        (``predict(output_type="full")``); the quantile is exact for TabPFN's
+        histogram posterior (piecewise-linear CDF), computed by
+        ``criterion.icdf``. Both arrays are in reward units, shape
+        ``(n_candidates,)``.
+        """
+        q = self.quantile
+        full = surrogate.predict(X, output_type="full")
+        logits, criterion = full["logits"], full["criterion"]
+        mean = criterion.mean(logits).cpu().detach().numpy().astype(float)
+        upper = criterion.icdf(logits, q).cpu().detach().numpy().astype(float)
+        return mean, upper
+
     def suggest_new(
         self,
         state: CurrentState,
@@ -332,9 +419,11 @@ class IMABOTabPFN(IMABO):
     ) -> ArmConfig:
         """Propose a new configuration using the TabPFN-3 oracle (explore).
 
-        One TabPFN fit+predict ranks ``n_candidates`` random configs by the UCB
-        ``mean + kappa * std`` and caches the top ``refit_every`` of them, so the
-        expensive foundation-model call is amortized across several explore steps.
+        One TabPFN fit+predict ranks ``n_candidates`` random configs by the
+        acquisition (``mean + kappa * std``, or the ``quantile`` level of the
+        predictive distribution) and caches the top ``refit_every`` of them, so
+        the expensive foundation-model call is amortized across several explore
+        steps.
         """
         if len(rewarded_arms) < self.min_arms_for_fit:
             return self.generate_random_config()
@@ -345,13 +434,19 @@ class IMABOTabPFN(IMABO):
                 self.on_suggestion(config, mean_pred, ucb_pred)
             return config
 
-        surrogate = self._fit_surrogate(rewarded_arms)
-
         candidates = [self.generate_random_config() for _ in range(self.n_candidates)]
         X_candidates = self._configs_to_frame(candidates)
 
-        mean, std = self._predict_mean_std(surrogate, X_candidates)
-        scores = mean + self.kappa * std  # UCB on the calibrated posterior
+        with _tabpfn_serialization_lock():
+            surrogate = self._fit_surrogate(rewarded_arms)
+            if self.acquisition == "quantile":
+                # Quantile form of UCB: rank on F^-1(quantile) of the posterior.
+                mean, scores = self._predict_mean_quantile(surrogate, X_candidates)
+            else:
+                # Moment UCB at the normality-equivalent exploration weight.
+                kappa = quantile_to_kappa(self.quantile)
+                mean, std = self._predict_mean_std(surrogate, X_candidates)
+                scores = mean + kappa * std
 
         if self.on_candidates_scored is not None:
             self.on_candidates_scored(candidates, mean)

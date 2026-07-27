@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from dotenv import load_dotenv
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
@@ -46,6 +47,10 @@ from imabo import IMABO
 from imabo.memory import config_to_key
 from imabo.optimizer import IMABOTabFM, load_tabfm
 from imabo.tabpfn_optimizer import IMABOTabPFN, load_tabpfn
+
+# Pick up TABPFN_TOKEN (PriorLabs license/API key) and friends from .env, as
+# the HotpotQA experiment already does for OPENROUTER_API_KEY.
+load_dotenv()
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "hpo_finite_arm_distribution"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -87,18 +92,32 @@ class Algorithm(Enum):
     UCB_AIR = "UCB-AIR"
 
 
-def algo_slug(algorithm: Algorithm, fit_granularity: str = "arm") -> str:
+def algo_slug(
+    algorithm: Algorithm,
+    fit_granularity: str = "arm",
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
+) -> str:
     """Filesystem-safe label, used for per-algorithm result filenames.
 
-    The per-pull TabPFN variant gets a distinct ``..._pull`` slug so its result
-    JSONs (and the plotted ``IMOSS-TabPFN-pull`` series) live alongside -- and
-    never clobber -- the default per-arm TabPFN results in the same directory.
-    The surrogate-free arms are unaffected by granularity, so they keep their
-    usual slugs and are reused across both modes and both foundation models.
+    IMOSS-TabPFN's default configuration -- quantile acquisition at the
+    0.99 level -- keeps the plain ``imoss_tabpfn`` slug. Non-default variants
+    get distinct suffixes -- ``_pull`` (per-pull tables), ``_q<q>`` (quantile
+    at a non-default level), ``_ucb_q<q>`` (moment UCB at the
+    normality-equivalent kappa) -- so their result
+    JSONs (and plotted series) live alongside, and never clobber, the
+    default's. The surrogate-free arms are unaffected by these options, so
+    they keep their usual slugs and are reused across all variants and both
+    foundation models.
     """
     slug = algorithm.value.lower().replace(" ", "_").replace("-", "_")
     if algorithm == Algorithm.IMOSS_TABPFN and fit_granularity == "pull":
         slug += "_pull"
+    if algorithm == Algorithm.IMOSS_TABPFN:
+        if acquisition == "ucb":
+            slug += f"_ucb_q{quantile:g}"
+        elif quantile != 0.99:
+            slug += f"_q{quantile:g}"
     return slug
 
 
@@ -226,6 +245,8 @@ def run_single_experiment(
     oracle_probe_every: int = ORACLE_PROBE_EVERY,
     fit_granularity: str = "arm",
     max_num_rows: int | None = None,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ) -> dict:
     """Run one seed, recording every `oracle_probe_every` iterations the
     mean/std of the true reward of `n_shadow` independent draws from the
@@ -236,10 +257,13 @@ def run_single_experiment(
     The surrogate diagnostics (the ``tabfm_*`` fields) fire for either
     foundation-model oracle -- IMOSS-TabFM or IMOSS-TabPFN -- and keep the
     ``tabfm_*`` names verbatim so the plotting code reads both unchanged.
-    ``fit_granularity`` / ``max_num_rows`` only affect IMOSS-TabPFN (see
-    :class:`imabo.tabpfn_optimizer.IMABOTabPFN`): ``"arm"`` (default) fits one
-    row per arm at its mean reward, ``"pull"`` one row per individual pull (no
-    averaging, KV-cache on).
+    ``fit_granularity`` / ``max_num_rows`` / ``acquisition`` / ``quantile``
+    only affect IMOSS-TabPFN (see :class:`imabo.tabpfn_optimizer.IMABOTabPFN`):
+    ``"arm"`` (default) fits one row per arm at its mean reward, ``"pull"``
+    one row per individual pull (no averaging, KV-cache on); ``acquisition``
+    is the ``quantile`` level of the predictive distribution (``"quantile"``,
+    default) or the moment UCB at the normality-equivalent kappa (``"ucb"``)
+    -- ``quantile`` is the single exploration knob for both.
     """
     if algorithm == Algorithm.IMOSS_TABFM:
         opt = IMABOTabFM(
@@ -265,6 +289,8 @@ def run_single_experiment(
             n_estimators=4,
             fit_granularity=fit_granularity,
             max_num_rows=effective_max_rows,
+            acquisition=acquisition,
+            quantile=quantile,
         )
     else:
         opt = build_optimizer(
@@ -457,12 +483,15 @@ def run_multiple_experiments(
     n_jobs: int = N_JOBS,
     fit_granularity: str = "arm",
     max_num_rows: int | None = None,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ) -> list[dict]:
     """Run multiple independent runs of a single algorithm, checkpointed per
     run."""
     stem = (
         f"{benchmark_tag(bench.bm_id, True)}"
-        f"_{algo_slug(algorithm, fit_granularity)}_{n_iterations}iters"
+        f"_{algo_slug(algorithm, fit_granularity, acquisition, quantile)}"
+        f"_{n_iterations}iters"
     )
 
     all_results: list[dict | None] = [None] * n_runs
@@ -489,6 +518,8 @@ def run_multiple_experiments(
             tabpfn_model=tabpfn_model,
             fit_granularity=fit_granularity,
             max_num_rows=max_num_rows,
+            acquisition=acquisition,
+            quantile=quantile,
         )
         with open(RESULT_DIR / f"{stem}_run{i}.json", "w") as f:
             json.dump(result, f)
@@ -515,6 +546,8 @@ def run_experiment(
     n_jobs: int = N_JOBS,
     fit_granularity: str = "arm",
     max_num_rows: int | None = None,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ) -> None:
     # Load/warm up the surrogate model once (both loaders are memoized, so
     # passing a preloaded model in from the caller avoids re-warming per bench).
@@ -526,7 +559,14 @@ def run_experiment(
         _silence_known_warnings()  # importing tabpfn/sklearn can reset filters
         print("TabPFN-3 ready (checkpoint cached; reused across all runs/budgets).")
 
-    gran = f" [{fit_granularity}]" if algorithm == Algorithm.IMOSS_TABPFN else ""
+    gran = ""
+    if algorithm == Algorithm.IMOSS_TABPFN:
+        acq = (
+            f"quantile q={quantile:g}"
+            if acquisition == "quantile"
+            else f"ucb q={quantile:g}"
+        )
+        gran = f" [{fit_granularity}, {acq}]"
     print(f"\n{algorithm.value}{gran}: T={n_iter}, {n_runs} runs...")
     run_multiple_experiments(
         bench,
@@ -539,6 +579,8 @@ def run_experiment(
         n_jobs=n_jobs,
         fit_granularity=fit_granularity,
         max_num_rows=max_num_rows,
+        acquisition=acquisition,
+        quantile=quantile,
     )
 
 
@@ -561,6 +603,8 @@ def make_plots(
     foundation: str = "tabpfn",
     fit_granularity: str = "arm",
     save_fig: bool = True,
+    acquisition: str = "quantile",
+    quantile: float = 0.99,
 ) -> None:
     """Draw the paper's RF figures for one foundation-model oracle: the static
     reward-landscape structure grid (benchmark-only), the combined
@@ -569,8 +613,10 @@ def make_plots(
 
     ``foundation`` selects the foundation-model series ("tabfm" or "tabpfn");
     the three surrogate-free baselines are shared by both figures. For "tabpfn"
-    with ``fit_granularity="pull"`` the per-pull series and ``..._pull``
-    filenames are used, so they sit next to (never overwrite) the per-arm ones.
+    with ``fit_granularity="pull"``, ``acquisition="quantile"`` and/or a
+    non-default ``quantile``, the variant series and suffixed filenames
+    (``..._pull``/``..._q0.975``/``..._ucb_q0.99``) are used, so they sit next
+    to (never overwrite) the default per-arm q=0.99 quantile ones.
     """
     # Head-less: make the plotting helpers' trailing ``plt.show()`` a no-op so
     # every PDF is written without a GUI (an interactive backend would block).
@@ -596,6 +642,23 @@ def make_plots(
         else "IMOSS-TabFM"
     )
     suffix = "_pull" if is_pull else ""
+    if is_tabpfn and acquisition == "ucb":
+        variant = f"ucb_q{quantile:g}"
+    elif is_tabpfn and acquisition == "quantile" and quantile != 0.99:
+        variant = f"q{quantile:g}"
+    else:
+        variant = None
+    if variant is not None:
+        fm_label += f"-{variant}"
+        suffix += f"_{variant}"
+        # Register the variant's slug -> display label so every loader that
+        # globs result files (they map slugs through _PRETTY_LABELS) picks the
+        # variant series up under a readable name.
+        from experiments.utils.plots.plot_configs import _PRETTY_LABELS
+
+        _PRETTY_LABELS[
+            algo_slug(Algorithm.IMOSS_TABPFN, fit_granularity, acquisition, quantile)
+        ] = fm_label
     regret_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label, "UCB-AIR"]
     oracle_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label]
 
@@ -662,6 +725,30 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="TabPFN in-context row cap (default: 200 for arm, 10000 for pull).",
+    )
+    p.add_argument(
+        "--acquisition",
+        choices=["ucb", "quantile"],
+        default="quantile",
+        help=(
+            "IMOSS-TabPFN acquisition: 'quantile' (default) ranks candidates "
+            "on the --quantile level of TabPFN's predictive distribution "
+            "(the GIT-BO quantile form of UCB); 'ucb' ranks on "
+            "mean + kappa*std at kappa = Phi^-1(--quantile). 'ucb' results "
+            "go to distinct '..._ucb_q<q>' files/plots."
+        ),
+    )
+    p.add_argument(
+        "--quantile",
+        type=float,
+        default=0.99,
+        help=(
+            "IMOSS-TabPFN exploration level in (0,1) (default 0.99, the "
+            "best/most seed-stable setting in the acquisition comparison): "
+            "the level ranked on by the quantile acquisition, or converted "
+            "to the UCB weight via kappa = Phi^-1(quantile) for 'ucb'. "
+            "Non-default values go to distinct '..._q<q>' files/plots."
+        ),
     )
     p.add_argument(
         "--foundation",
@@ -734,6 +821,8 @@ if __name__ == "__main__":
                         n_jobs=args.n_jobs,
                         fit_granularity=args.fit_granularity,
                         max_num_rows=args.max_num_rows,
+                        acquisition=args.acquisition,
+                        quantile=args.quantile,
                     )
                     bar.update(1)
                     done, total = bar.n, bar.total
@@ -763,4 +852,6 @@ if __name__ == "__main__":
                 foundation=foundation,
                 fit_granularity=args.fit_granularity,
                 save_fig=True,
+                acquisition=args.acquisition,
+                quantile=args.quantile,
             )
