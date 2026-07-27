@@ -57,7 +57,7 @@ def run_single(
     k: int = 1,
     beta: float = BETA,
 ) -> dict:
-    obj = ObjectiveFunctions(dim=dim, noise_seed=seed, noise_std=0.0)
+    obj = ObjectiveFunctions(dim=dim, noise_seed=seed, noise_std=0.5)
     func = obj.get_function_by_name(function_name)  # built-in noise
     func_noiseless = obj.get_function_by_name(function_name, noise=False)  # noiseless
     fmax = obj.get_theoretical_max(function_name)
@@ -97,9 +97,9 @@ def run_single(
         range(n_iterations), desc=f"  {function_name} {dim}D runs", leave=False
     ):
         x = suggest_fn()
-        p = np.clip(func(x) / dim, 0.0, 1.0)
-        y = rng.binomial(1, p)
-        regrets.append(fmax - func_noiseless(x) / dim)
+        noiseless = func_noiseless(x) / dim
+        y = noiseless + obj.noise_rng.normal(0, obj.noise_std)
+        regrets.append(fmax - noiseless)
         observe_fn(y)
 
     best_x = best_x_fn()
@@ -271,8 +271,8 @@ def _save_k_results(results: dict, function_name: str, beta: float = BETA) -> No
 
 
 if __name__ == "__main__":
-    print("=== Sub-experiment 1: TPE oracle impact ===")
-    run_tpe_ablation()
+    # print("=== Sub-experiment 1: TPE oracle impact ===")
+    # run_tpe_ablation()
 
     print("\n=== Sub-experiment 2: MOSS oracle / k impact ===")
     run_k_ablation()

@@ -94,8 +94,9 @@ def run_optimization(
                 continue
             z = opt.suggest()
             x = _rescale_to_search_space(z, search_space) if is_xarm else z
-            y = func(x) / dim
-            regret = fmax - func_noiseless(x) / dim
+            noiseless = func_noiseless(x) / dim
+            y = noiseless + obj_func.noise_rng.normal(0, obj_func.noise_std)
+            regret = fmax - noiseless
             if is_xarm:
                 opt.observe(z, y)
             else:

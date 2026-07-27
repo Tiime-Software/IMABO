@@ -9,11 +9,10 @@ from matplotlib.lines import Line2D
 from pathlib import Path
 
 from experiments.utils.plots.plot_configs import (
-    adaptive_label_fontsize,
     confidence_ellipse,
-    create_figure_legend,
     display_name,
     get_algorithm_color,
+    paper_style,
     save_figure,
     set_research_style,
     RESEARCH_COLORS,
@@ -21,41 +20,92 @@ from experiments.utils.plots.plot_configs import (
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"
 
+
 set_research_style()
 
+# This figure lives in the APPENDIX, where we don't need exact main-paper
+# print size -- so, like ablation_plot.py / delayed_feedback_plot.py's
+# _appendix_style / _appendix_figsize, it follows the paper_style CONVENTION
+# (Wong colors, shared top legend via create_figure_legend, style_axis look)
+# but overrides paper_style's tiny print fonts/lines (~6.5-9pt, sized for
+# shrink-to-column at final print) with larger, readable values.
+_APPENDIX_PANEL_W_IN = 4.2  # per-benchmark panel width
+_APPENDIX_PANEL_H_IN = 3.4  # per-panel height (before legend headroom)
 
-def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
+
+def _appendix_style(columns: int = 1, max_legend_single_row: int = 3):
+    return paper_style(
+        "aaai",
+        columns=columns,
+        title_fontsize=20,
+        label_fontsize=18,
+        tick_fontsize=15,
+        legend_fontsize=16,
+        linewidth=2.2,
+        markersize=8,
+        max_legend_single_row=max_legend_single_row,
+    )
+
+
+def _appendix_figsize(n_panels: int, n_legend_rows: int = 1):
+    return (
+        _APPENDIX_PANEL_W_IN * n_panels,
+        _APPENDIX_PANEL_H_IN + 0.55 * n_legend_rows,
+    )
+
+
+def _appendix_legend_rect_top(n_legend_rows: int) -> float:
+    fig_h = _APPENDIX_PANEL_H_IN + 0.55 * n_legend_rows
+    return 1.0 - (0.55 * n_legend_rows) / fig_h
+
+
+def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", columns=1):
     """
-    Plot performance trajectories with confidence ellipses for multiple toy benchmarks.
+    Plot performance trajectories with confidence ellipses for multiple toy
+    benchmarks -- appendix figure, styled like
+    delayed_feedback_plot.plot_cumulative_regret_grid /
+    ablation_plot.plot_cumulative_regrets_k_experiment: paper_style
+    CONVENTION (colors, spines, shared top legend) at larger, appendix-
+    readable font/line sizes rather than the tiny main-paper print pt.
 
     Args:
         benchmarks: List of benchmark names (e.g., ['sin1', 'garland', 'rastrigin'])
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
+        columns: 1 (single text column) or 2 (full text width / AAAI
+            `figure*`) -- see plot_configs.paper_figure_width_in.
     """
     n_benchmarks = len(benchmarks)
-    fig, axes = plt.subplots(1, n_benchmarks, figsize=(10 * n_benchmarks, 8))
 
+    dfs = {
+        benchmark: pd.read_csv(RESULTS_DIR / f"{benchmark}_{exp_type}_summary.csv")
+        for benchmark in benchmarks
+    }
+    algorithms = dfs[benchmarks[0]]["algorithm"].unique().tolist()
+    base_markers = ["o", "s", "^", "D", "v", "<", ">", "p"]
+    markers = [base_markers[i % len(base_markers)] for i in range(len(algorithms))]
+
+    # Force the legend onto one row -- at this panel width (n * 4.2in) even
+    # several entries fit comfortably on one line.
+    style = _appendix_style(columns, max_legend_single_row=len(algorithms))
+    n_rows = style.n_legend_rows(len(algorithms))
+
+    fig, axes = plt.subplots(
+        1, n_benchmarks, figsize=_appendix_figsize(n_benchmarks, n_rows)
+    )
     if n_benchmarks == 1:
         axes = [axes]
 
     for ax_idx, benchmark in enumerate(benchmarks):
         ax = axes[ax_idx]
-
-        csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_summary.csv"
-        df = pd.read_csv(csv_file)
+        df = dfs[benchmark]
 
         has_raw_data = "simple_regrets" in df.columns and "sum_regrets" in df.columns
-
-        algorithms = df["algorithm"].unique().tolist()
-
-        base_markers = ["o", "s", "^", "D", "v", "<", ">", "p"]
-        markers = [base_markers[i % len(base_markers)] for i in range(len(algorithms))]
 
         all_xs, all_ys = [], []
         trajectories = {}
 
-        for i, algorithm in enumerate(algorithms):
+        for algorithm in algorithms:
             algo_data = df[df["algorithm"] == algorithm].sort_values("n_iterations")
             simple_regrets = algo_data["simple_regret_mean"].values
             total_regrets = algo_data["total_regret_mean"].values
@@ -104,7 +154,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                             alpha=0.15,
                             facecolor=color,
                             edgecolor=color,
-                            linewidth=1.5,
+                            linewidth=1.2,
                             zorder=2,
                         )
                         ax.scatter(
@@ -112,9 +162,9 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                             sum_regrets_raw,
                             c=color,
                             alpha=0.25,
-                            s=15,
+                            s=10,
                             edgecolors="white",
-                            linewidths=0.5,
+                            linewidths=0.4,
                             zorder=3,
                         )
 
@@ -124,11 +174,11 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                     [xs[j], xs[j + 1]],
                     [ys[j], ys[j + 1]],
                     color=color,
-                    linewidth=3,
+                    linewidth=style.linewidth,
                     alpha=alpha,
                 )
 
-            sizes = np.linspace(60, 120, len(xs))
+            sizes = np.linspace(30, 60, len(xs))
             ax.scatter(
                 xs,
                 ys,
@@ -137,26 +187,30 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
                 marker=markers[i],
                 alpha=0.8,
                 edgecolors="white",
-                linewidths=2,
-                label=display_name(algorithm) if ax_idx == 0 else "",
+                linewidths=1.2,
                 zorder=5,
             )
 
-        label_fs = adaptive_label_fontsize(ax)
         # Only show xlabel on the middle subplot and ylabel on the left
         # subplot, matching ablation_plot.py's convention (one shared label
         # per axis instead of repeating it under/beside every panel).
         if ax_idx == n_benchmarks // 2:
-            ax.set_xlabel("Simple Regret", fontweight="bold", fontsize=35)
+            ax.set_xlabel(
+                "Simple Regret", fontweight="bold", fontsize=style.label_fontsize
+            )
         if ax_idx == 0:
             ax.set_ylabel(
-                "Normalized Cumulative Regret", fontweight="bold", fontsize=30
+                "Online Avg. Regret",
+                fontweight="bold",
+                fontsize=style.label_fontsize,
             )
-        ax.set_title(benchmark.upper(), fontweight="bold", fontsize=24, pad=15)
-        ax.tick_params(axis="both", which="major", labelsize=30)
-        ax.set_axisbelow(True)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+        ax.set_title(
+            benchmark.capitalize(),
+            fontweight="bold",
+            fontsize=style.title_fontsize,
+            pad=4,
+        )
+        style.style_axis(ax)
 
     legend_handles = [
         Line2D(
@@ -166,18 +220,16 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy"):
             color=get_algorithm_color(i),
             markerfacecolor=get_algorithm_color(i),
             markeredgecolor="white",
-            markeredgewidth=1.5,
-            markersize=16,
+            markeredgewidth=1.2,
+            markersize=style.markersize,
             linestyle="",
         )
         for i in range(len(algorithms))
     ]
     legend_labels = [display_name(algorithm) for algorithm in algorithms]
-    create_figure_legend(
-        fig, legend_handles, legend_labels, ncol=len(algorithms), bbox_y=1.05
-    )
+    style.legend(fig, legend_handles, legend_labels, n_labels=len(algorithms))
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout(rect=[0, 0, 1, _appendix_legend_rect_top(n_rows)])
 
     if save_fig:
         filename = "_".join(benchmarks)

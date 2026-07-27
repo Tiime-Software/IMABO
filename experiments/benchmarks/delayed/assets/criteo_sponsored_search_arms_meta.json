@@ -1,0 +1,18 @@
+{
+  "instance": "sponsored_search",
+  "segment_cols": [
+    "product_category1",
+    "device_type",
+    "product_age_group",
+    "product_gender",
+    "product_brand"
+  ],
+  "min_count": 200,
+  "seconds_per_step": 3600.0,
+  "n_arms": 6033,
+  "n_clicks": 15995634,
+  "conversion_rate": 0.10832462158111394,
+  "best_conversion_rate": 0.5042016806722689,
+  "median_delay_steps": 0.9375,
+  "mean_delay_steps": 88.76397524962742
+}

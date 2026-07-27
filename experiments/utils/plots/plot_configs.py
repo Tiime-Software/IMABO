@@ -39,7 +39,14 @@ def get_algorithm_color(index: int) -> str:
 
 # Keep display labels identical to the canonical identities in
 # ALGORITHM_STYLES below, so the same method reads the same in every figure.
-DISPLAY_NAME_OVERRIDES = {"IMABO": "IMOSS-TPE"}
+# "StroquOOL" is the baseline's actual stylized name (its raw series value is
+# "Stroquool", plain-cased, so it round-trips through ALGORITHM_STYLES/
+# _ALGORITHM_ALIASES below unchanged).
+DISPLAY_NAME_OVERRIDES = {
+    "IMABO": "IMOSS-TPE",
+    "I-MOSS-TPE": "IMOSS-TPE",
+    "Stroquool": "StroquOOL",
+}
 
 
 def display_name(name: str) -> str:
@@ -130,7 +137,9 @@ def normalize_algorithm_name(name: str) -> str:
 def algorithm_style(name: str) -> tuple[str, str]:
     """(color, marker) for a series, consistent across every figure -- see
     normalize_algorithm_name and ALGORITHM_STYLES."""
-    return ALGORITHM_STYLES.get(normalize_algorithm_name(name), _DEFAULT_ALGORITHM_STYLE)
+    return ALGORITHM_STYLES.get(
+        normalize_algorithm_name(name), _DEFAULT_ALGORITHM_STYLE
+    )
 
 
 def algorithm_color(name: str) -> str:
@@ -207,6 +216,7 @@ def legend_ncol_for_columns(
     if columns == 2 or n_labels <= max_single_row:
         return n_labels
     return -(-n_labels // 2)  # ceil(n_labels / 2) -> 2 rows
+
 
 # AAAI-specific aliases, kept as the reference values the above were derived
 # from (7.0in \textwidth == paper_figure_width_in(2, "aaai")).
@@ -286,7 +296,9 @@ class PaperStyle:
         grid, and no top/right spines."""
         ax.tick_params(axis="both", which="major", labelsize=self.tick_fontsize)
         ax.set_axisbelow(True)
-        ax.grid(True, axis=grid_axis, alpha=self.grid_alpha, linewidth=self.grid_linewidth)
+        ax.grid(
+            True, axis=grid_axis, alpha=self.grid_alpha, linewidth=self.grid_linewidth
+        )
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
@@ -311,9 +323,7 @@ class PaperStyle:
         return rows
 
 
-def paper_style(
-    conference: str = "aaai", columns: int = 1, **overrides
-) -> PaperStyle:
+def paper_style(conference: str = "aaai", columns: int = 1, **overrides) -> PaperStyle:
     """Build a PaperStyle for a `columns`-wide (1 = narrow, 2 = full text
     width) placement in `conference`'s template. Extra keyword args override
     individual fields, e.g. `paper_style("neurips", 2, linewidth=2.0)`."""
@@ -475,6 +485,20 @@ _BENCH_NAMES = {
     "rf167120": "numerai28.6",
     "rf9952": "phoneme",
     "rf3": "kr-vs-kp",
+    # LCBench surrogate instances (mixed continuous+finite; tag prefix "lc"),
+    # used by the delayed-feedback experiment. Verified against OpenML directly
+    # -- 167200/189908 are the real higgs/Fashion-MNIST tasks (an earlier
+    # version of this dict mislabeled 126026/167104, which are actually
+    # nomao/Australian).
+    "lc167200": "higgs",
+    "lc168330": "jannis",
+    "lc189908": "Fashion-MNIST",
+    "lc168868": "APSFailure",
+    "lc189354": "airlines",
+    # NAS-Bench-201 datasets (structured NAS cell; tag prefix "nb201").
+    "nb201cifar10": "CIFAR-10",
+    "nb201cifar100": "CIFAR-100",
+    "nb201ImageNet16-120": "ImageNet16-120",
 }
 
 
