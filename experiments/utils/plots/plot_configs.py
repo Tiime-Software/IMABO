@@ -92,6 +92,12 @@ ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     # Per-pull TabPFN variant (fit on individual pulls, not per-arm means).
     "IMOSS-TabPFN-pull": (_PALETTE_GREEN, "X"),  # rf (TabPFN per-pull comparison)
     "UCB-AIR": (_PALETTE_VERMILLION, "D"),  # rf, hotpotqa
+    # hier_compare only; never co-occurs with IMOSS-Random, so blue is free.
+    # The alpha ablation is the same method, so it keeps the colour and is
+    # separated by marker (+ a dashed line in hier_compare's plot).
+    "Hier-UCB": (_PALETTE_BLUE, "v"),
+    "Hier-UCB (ablation)": (_PALETTE_BLUE, "*"),  # alpha^h=1.5, alpha^l=0.5
+    "Hier-UCB (fine)": (_PALETTE_BLUE, "P"),  # hier_compare_continuous: finer grid
     "Random": (_PALETTE_BLUE, "p"),  # hotpotqa (no overlap with IMOSS)
     "HOO-T": (_PALETTE_BLUE, "v"),  # hpo
     "StoSOO": (_PALETTE_GREEN, "<"),  # hpo
@@ -112,6 +118,9 @@ _ALGORITHM_ALIASES = {
     "imoss-tabpfn-pull": "IMOSS-TabPFN-pull",
     "ucb-air": "UCB-AIR",
     "ucbair": "UCB-AIR",
+    "hier-ucb": "Hier-UCB",
+    "hierucb": "Hier-UCB",
+    "hier-mab": "Hier-UCB",
     "random": "Random",
     "random-search": "Random",
     "hoo-t": "HOO-T",
