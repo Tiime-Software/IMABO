@@ -37,9 +37,14 @@ ALL = _IMOSS_FAMILY + ["UCB-AIR"]
 _ORACLE_LABELS = {
     "IMOSS-Random": "Random",
     "IMOSS-TPE": "TPE",
+    "IMOSS-TPE-univ": "TPE-univ",
     "IMOSS-TabFM": "TabFM",
     "IMOSS-TabPFN": "TabPFN",
 }
+
+# Per-series linestyle overrides (color+marker come from algorithm_style):
+# the univariate-TPE variant shares IMOSS-TPE's orange, so it is dashed.
+_SERIES_LINESTYLE = {"IMOSS-TPE-univ": "--"}
 
 
 def _load_trace_field(
@@ -89,15 +94,36 @@ def plot_cumulative_regret_grid(
     n_iterations=None,
     save_fig=False,
     algorithms=None,
+    band="ci95",
 ):
     """Cumulative regret vs iteration, one subplot per benchmark, side by side.
 
     Built from the per-pull noiseless regret (`regrets`) logged in this
     experiment's own per-run JSONs directly (no aggregated CSV exists for
-    this experiment -- see rf_arm_distribution_experiment.py). No uncertainty
-    band: the cumulative mean grows ~O(t) while the cumulative std of a sum
-    grows only ~O(sqrt(t)), so any band shrinks to a couple percent of the
-    total well before t=5000.
+    this experiment -- see rf_arm_distribution_experiment.py).
+
+    Uncertainty band (``band``): ``"ci95"`` (default) draws a 95% CI of the
+    mean across seeds, ``"sd"`` draws +/-1 across-seed standard deviation, and
+    ``None`` reproduces the old band-less figure.
+
+    The band is computed ACROSS SEEDS on each seed's own cumulative curve --
+    ``cumsum`` first, then take the spread over runs -- never from the
+    within-run dispersion of the per-round regret. That distinction matters:
+    an earlier version of this function omitted the band on the grounds that
+    "the cumulative mean grows ~O(t) while the cumulative std of a sum grows
+    only ~O(sqrt(t))", which is the behaviour of a sum of *independent*
+    per-round terms within one run. It is not what a band over seeds shows.
+    Seeds differ in which arms enter the active set, so their cumulative
+    curves diverge roughly linearly and the across-seed spread stays a roughly
+    constant *fraction* of the total. Measured on the stored runs at t=5000 it
+    is 9-21% of the mean depending on task and method (UCB-AIR on `segment`:
+    412.6 +- 86.7, i.e. 21%), not "a couple percent" -- large enough that
+    several method gaps in this figure are within it, so the band has to be
+    shown for the comparison to be read honestly.
+
+    Seed counts may differ per method (e.g. the surrogate oracles are
+    expensive to rerun), so the resolved ``n`` is appended to each legend
+    entry rather than assumed uniform.
     """
     algorithms = algorithms if algorithms is not None else _IMOSS_FAMILY
 
@@ -107,6 +133,7 @@ def plot_cumulative_regret_grid(
         axes = [axes]
 
     seen: dict = {}
+    seed_counts: dict = {}
     for idx, (ax, benchmark) in enumerate(zip(axes, benchmarks)):
         traces_by_algo, _ = _load_trace_field(benchmark, n_iterations, "regrets")
         labels = _ordered([a for a in algorithms if a in traces_by_algo])
@@ -114,7 +141,12 @@ def plot_cumulative_regret_grid(
         for algo in labels:
             runs = np.vstack(traces_by_algo[algo])  # n_runs x n_iterations
             iters = np.arange(1, runs.shape[1] + 1)
-            cumulative_mean = np.cumsum(runs.mean(axis=0))
+            # Per-seed cumulative curves, then aggregate across seeds.
+            cumulative_runs = np.cumsum(runs, axis=1)
+            cumulative_mean = cumulative_runs.mean(axis=0)
+            n_runs = cumulative_runs.shape[0]
+            seed_counts[algo] = min(seed_counts.get(algo, n_runs), n_runs)
+
             color, marker = _style_for(algo)
             (line,) = ax.plot(
                 iters,
@@ -126,6 +158,17 @@ def plot_cumulative_regret_grid(
                 linewidth=2.0,
                 markersize=8,
             )
+            if band is not None and n_runs > 1:
+                sd = cumulative_runs.std(axis=0, ddof=1)
+                half = sd if band == "sd" else 1.96 * sd / np.sqrt(n_runs)
+                ax.fill_between(
+                    iters,
+                    cumulative_mean - half,
+                    cumulative_mean + half,
+                    color=color,
+                    alpha=0.15,
+                    linewidth=0,
+                )
             seen.setdefault(algo, line)
 
         if idx == n // 2:  # Middle subplot
@@ -146,10 +189,16 @@ def plot_cumulative_regret_grid(
     )
 
     ordered_labels = _ordered(seen.keys())
+    # Seed counts can differ per method, so state each one rather than putting
+    # a single "n=..." in the caption and implying they match.
+    if band is not None and len(set(seed_counts.values())) > 1:
+        legend_labels = [f"{a} (n={seed_counts[a]})" for a in ordered_labels]
+    else:
+        legend_labels = list(ordered_labels)
     create_figure_legend(
         fig,
         [seen[a] for a in ordered_labels],
-        ordered_labels,
+        legend_labels,
         ncol=len(ordered_labels),
     )
 
@@ -157,14 +206,15 @@ def plot_cumulative_regret_grid(
 
     if save_fig:
         tag = "_".join(benchmarks)
+        suffix = "" if band is None else f"_{band}"
         out_path = (
             RESULTS_DIR
             / "paper_plots"
-            / f"{tag}_cumulative_regret_grid_arm_distribution.pdf"
+            / f"{tag}_cumulative_regret_grid_arm_distribution{suffix}.pdf"
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def _load_shadow_traces(
@@ -321,7 +371,7 @@ def plot_suggested_arm_distribution_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 # (iter_field, predicted_field, true_field) for the two predicted-vs-true
@@ -515,11 +565,20 @@ def _plot_suggestion_metric_grid(
     smoothing_span=1,
     log_scale=False,
     zero_line=False,
+    algorithms=None,
 ):
     """Shared plotting body for the suggestion-metric grids (MSE, bias, or
     any future per-draw metric) -- one subplot per benchmark, mean line +
     std band across seeds, using `load_fn(benchmark, n_iterations)` to get
     each benchmark's (iterations, mean, std) traces.
+
+    ``algorithms`` restricts which loaded series are drawn (default: the
+    canonical algorithms, via _ordered). The loaders glob every run file
+    whose JSON has the metric fields, which includes the TabPFN
+    acquisition-sweep variants (imoss_tabpfn_q0.841, ..._ucb_kappa1.96, ...);
+    without the filter those variants render as unlabeled default-styled
+    curves on top of the main series (the legend already filtered them, so
+    they appeared as anonymous black lines).
     """
     n = len(benchmarks)
     fig, axes = plt.subplots(1, n, figsize=(7 * n, 6))
@@ -529,8 +588,14 @@ def _plot_suggestion_metric_grid(
     seen: dict = {}
     for idx, (ax, benchmark) in enumerate(zip(axes, benchmarks)):
         traces, _ = load_fn(benchmark, n_iterations)
+        labels = (
+            [a for a in algorithms if a in traces]
+            if algorithms is not None
+            else _ordered(traces.keys())
+        )
 
-        for algo, (iters, mean, std) in traces.items():
+        for algo in labels:
+            iters, mean, std = traces[algo]
             mean = _ema(mean, smoothing_span)
             std = _ema(std, smoothing_span)
             color, marker = _style_for(algo)
@@ -583,7 +648,7 @@ def _plot_suggestion_metric_grid(
         out_path = RESULTS_DIR / "paper_plots" / f"{tag}_{filename_suffix}.pdf"
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_tabfm_suggestion_error_grid(
@@ -871,7 +936,7 @@ def plot_tabfm_calibration_grid(
         out_path = RESULTS_DIR / "paper_plots" / f"{tag}_tabfm_calibration_grid.pdf"
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def _load_pull_counts(
@@ -1087,7 +1152,7 @@ def plot_arm_pulls_landscape_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def _candidate_cell_mse_grid(benchmark, n_iterations, run=None, agg="mean"):
@@ -1263,7 +1328,7 @@ def plot_tabfm_mse_landscape_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_arm_pulls_embedding_grid(
@@ -1373,7 +1438,7 @@ def plot_arm_pulls_embedding_grid(
         out_path = RESULTS_DIR / "paper_plots" / f"{tag}_arm_pulls_embedding_grid.pdf"
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_arm_pulls_parallel_coords_grid(
@@ -1514,7 +1579,7 @@ def plot_arm_pulls_parallel_coords_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_cumulative_regret_gap(
@@ -1598,7 +1663,7 @@ def plot_cumulative_regret_gap(
         out_path = RESULTS_DIR / "paper_plots" / f"{tag}_cumulative_regret_gap.pdf"
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_regret_and_oracle_grid(
@@ -1611,12 +1676,23 @@ def plot_regret_and_oracle_grid(
     columns=2,
     conference="aaai",
     out_name="regret_and_oracle_grid",
+    final_errorbar=None,
 ):
     """Paper figure: cumulative regret (top row) and oracle proposal quality
     (bottom row), one column per benchmark, per-column x-axis -- combines
     plot_cumulative_regret_grid and plot_suggested_arm_distribution_grid into
     one figure-sized panel instead of two, so both are read together and only
     the bottom row needs an "Iteration" label.
+
+    ``final_errorbar`` puts the across-seed uncertainty of the cumulative
+    regret on the figure as one interval bar per method at the final round
+    only (``"ci95"`` for a 95% CI of the mean across seeds, ``"sd"`` for +/-1
+    across-seed standard deviation, ``None`` for none) -- computed from each
+    seed's own cumulative curve, like plot_cumulative_regret_grid's band. A
+    full-length band would bury the five closely spaced curves, and methods
+    can end at nearly identical means (Hier-MAB vs IMOSS-TabPFN on segment),
+    so the bars are dodged into a short strip just past t=T, one x-slot per
+    method in legend order, each sitting level with its own final mean.
 
     Two independent legends rather than one shared union: a top legend (full
     algorithm names) for the regret row, and a second legend row -- using
@@ -1678,10 +1754,11 @@ def plot_regret_and_oracle_grid(
         traces_by_algo, _ = _load_trace_field(benchmark, n_iterations, "regrets")
         labels = _ordered([a for a in regret_algorithms if a in traces_by_algo])
 
-        for algo in labels:
+        for i_algo, algo in enumerate(labels):
             runs = np.vstack(traces_by_algo[algo])  # n_runs x n_iterations
             iters = np.arange(1, runs.shape[1] + 1)
-            cumulative_mean = np.cumsum(runs.mean(axis=0))
+            cumulative_runs = np.cumsum(runs, axis=1)
+            cumulative_mean = cumulative_runs.mean(axis=0)
             color, marker = _style_for(algo)
             (line,) = ax.plot(
                 iters,
@@ -1692,7 +1769,26 @@ def plot_regret_and_oracle_grid(
                 markevery=style.markevery(len(iters)),
                 linewidth=style.linewidth,
                 markersize=style.markersize,
+                linestyle=_SERIES_LINESTYLE.get(algo, "-"),
             )
+            if final_errorbar is not None and runs.shape[0] > 1:
+                sd = float(cumulative_runs[:, -1].std(ddof=1))
+                half = (
+                    sd
+                    if final_errorbar == "sd"
+                    else 1.96 * sd / np.sqrt(runs.shape[0])
+                )
+                x_bar = runs.shape[1] * (1.035 + 0.035 * i_algo)
+                ax.errorbar(
+                    x_bar,
+                    cumulative_mean[-1],
+                    yerr=half,
+                    color=color,
+                    fmt="none",
+                    elinewidth=1.0,
+                    capsize=1.8,
+                    capthick=style.capthick,
+                )
             seen_top.setdefault(algo, line)
 
         ax.set_title(
@@ -1727,6 +1823,7 @@ def plot_regret_and_oracle_grid(
                 markevery=style.markevery(len(iters)),
                 linewidth=style.linewidth,
                 markersize=style.markersize,
+                linestyle=_SERIES_LINESTYLE.get(algo, "-"),
             )
             ax.fill_between(
                 iters,
@@ -1745,6 +1842,16 @@ def plot_regret_and_oracle_grid(
     axes_bottom[0].set_ylabel(
         "Oracle Proposal\nQuality", fontweight="bold", fontsize=style.label_fontsize
     )
+
+    if final_errorbar is not None:
+        # The dodged final-round bars extend the data range past t=T, which
+        # would otherwise grow the shared x tick labels beyond the horizon
+        # (a "6000" tick for a T=5000 run); pin the ticks to the horizon.
+        resolved_T = int(
+            max(line.get_xdata()[-1] for line in seen_top.values())
+        )
+        for j in range(n):
+            axes_bottom[j].set_xticks(np.arange(0, resolved_T + 1, 1000))
 
     for ax in list(axes_top) + list(axes_bottom):
         ax.label_outer()
@@ -1787,7 +1894,7 @@ def plot_regret_and_oracle_grid(
         out_path = RESULTS_DIR / "paper_plots" / f"{tag}_{out_name}.pdf"
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

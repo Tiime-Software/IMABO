@@ -240,7 +240,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", colum
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

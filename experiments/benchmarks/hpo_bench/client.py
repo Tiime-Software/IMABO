@@ -12,7 +12,9 @@ from typing import Optional
 import aiohttp
 
 
-URL = "http://localhost:8000"
+# Host-side port of the hpo-server container (see docker-compose.yml: mapped
+# to 8901 because localhost:8000 is occupied by an unrelated host service).
+URL = "http://localhost:8901"
 
 # Global session variable
 session: Optional[aiohttp.ClientSession] = None

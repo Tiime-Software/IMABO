@@ -24,7 +24,18 @@ services:
     environment:
       - QEMU_CPU=qemu64
     ports:
-      - "8000:8000"
+      # Host port 8901: localhost:8000 is taken by an unrelated host service
+      # (omlx serve), which answers 404 to /objective_function and makes the
+      # experiment fail depending on whether the client resolves IPv4 or IPv6.
+      - "8901:8000"
     volumes:
       - .:/workspace
+      # Persist the container home across recreations: HPOBench/OpenML cache
+      # downloaded datasets under /root, and losing them on every
+      # `docker compose down` re-downloads from openml.org (which
+      # intermittently 503s and then fails the whole load).
+      - hpo-home:/root
     command: bash -lc "source /etc/profile.d/conda.sh && conda activate hpo && python experiments/benchmarks/hpo_bench/server.py"
+
+volumes:
+  hpo-home:

@@ -164,7 +164,7 @@ def plot_dttts_compare(save_fig: bool = False):
         out = Path(__file__).parent / "dttts_compare.pdf"
         save_figure(out, bbox_inches="tight", mkdir=False)
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

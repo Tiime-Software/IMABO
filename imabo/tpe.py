@@ -131,7 +131,15 @@ def tpe_suggest(
         n_candidates: Number of EI candidates to sample.
         rng: Numpy RandomState for reproducibility.
         prior_weight: Prior weight for the Parzen estimator.
-        multivariate: Whether to use multivariate estimation.
+        multivariate: True (default) fits ONE joint Parzen mixture over the
+            whole space -- each component is a past observation, so sampling
+            preserves co-occurrence between parameters (including categorical
+            ones). False fits an independent 1-D estimator per parameter and
+            samples each coordinate on its own -- classical univariate TPE, a
+            fully factored proposal. (Passing the flag into Optuna's
+            _ParzenEstimator, as an earlier version did, only switches the
+            numerical bandwidth heuristic and does NOT factor the mixture --
+            on an all-categorical space it changed nothing at all.)
         weights_func: Function to compute observation weights.
 
     Returns:
@@ -149,26 +157,54 @@ def tpe_suggest(
         categorical_distance_func={},
     )
 
-    parzen_l = _ParzenEstimator(
-        observations=good_obs,
-        search_space=distributions,
-        parameters=parzen_params,
-    )
-    parzen_g = _ParzenEstimator(
-        observations=bad_obs,
-        search_space=distributions,
-        parameters=parzen_params,
-    )
+    if multivariate:
+        parzen_l = _ParzenEstimator(
+            observations=good_obs,
+            search_space=distributions,
+            parameters=parzen_params,
+        )
+        parzen_g = _ParzenEstimator(
+            observations=bad_obs,
+            search_space=distributions,
+            parameters=parzen_params,
+        )
 
-    candidates_dict = parzen_l.sample(rng, n_candidates)
-    candidates = optuna_to_configs(candidates_dict, param_names, distributions)
+        candidates_dict = parzen_l.sample(rng, n_candidates)
+        candidates = optuna_to_configs(candidates_dict, param_names, distributions)
 
-    if not candidates:
-        return None
+        if not candidates:
+            return None
 
-    candidates_obs = configs_to_optuna(candidates, param_names, distributions)
-    log_l = parzen_l.log_pdf(candidates_obs)
-    log_g = parzen_g.log_pdf(candidates_obs)
+        candidates_obs = configs_to_optuna(candidates, param_names, distributions)
+        log_l = parzen_l.log_pdf(candidates_obs)
+        log_g = parzen_g.log_pdf(candidates_obs)
+    else:
+        # Univariate TPE: an independent 1-D estimator pair per parameter,
+        # each coordinate sampled from its own l-density, EI scored as the
+        # sum of per-dimension log ratios (the log of a product density).
+        candidates_dict: OptunaConfigs = {}
+        log_l = np.zeros(n_candidates)
+        log_g = np.zeros(n_candidates)
+        for name in param_names:
+            dist = {name: distributions[name]}
+            parzen_l = _ParzenEstimator(
+                observations={name: good_obs[name]},
+                search_space=dist,
+                parameters=parzen_params,
+            )
+            parzen_g = _ParzenEstimator(
+                observations={name: bad_obs[name]},
+                search_space=dist,
+                parameters=parzen_params,
+            )
+            samples = parzen_l.sample(rng, n_candidates)
+            candidates_dict[name] = samples[name]
+            log_l += parzen_l.log_pdf(samples)
+            log_g += parzen_g.log_pdf(samples)
+
+        candidates = optuna_to_configs(candidates_dict, param_names, distributions)
+        if not candidates:
+            return None
 
     ei_scores = log_l - log_g
     best_idx = int(np.argmax(ei_scores))

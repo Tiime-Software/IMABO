@@ -5,6 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import matplotlib
+
+# File-only plotting: every figure in this package is written to a PDF via
+# save_figure/savefig, never displayed. Forcing the non-interactive Agg
+# backend here (the shared import point of every plot module) stops the
+# default macOS backend from popping a window per figure when a plot script
+# is run from the terminal.
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
 from matplotlib.patches import Ellipse
@@ -62,10 +70,10 @@ def display_name(name: str) -> str:
 # (color, marker). This replaced the old by-list-position coloring in hpo_plot
 # / hotpotqa_plot, which let the same method change color between figures.
 #
-# Every figure draws from ONE 4-color palette -- blue, orange, green, vermillion
-# -- all from the Wong (Nature Methods, 2011) set, so each plot has the same
-# look as the RF figure. Each figure happens to show exactly four series, so all
-# four colors appear once per figure (no palette's hard-to-read yellow, no gray).
+# Every figure draws from ONE palette -- blue, orange, green, vermillion, plus
+# reddish purple for the one five-series figure (the RF regret comparison with
+# Hier-MAB) -- all from the Wong (Nature Methods, 2011) set, so each plot has
+# the same look as the RF figure (no palette's hard-to-read yellow, no gray).
 #
 # Colorblind note: orange and vermillion are the one pair in this palette that
 # converge (both -> gold) under deuteranopia. Every figure pairs them (IMOSS-TPE
@@ -84,6 +92,8 @@ _PALETTE_BLUE = "#0072B2"
 _PALETTE_ORANGE = "#E69F00"
 _PALETTE_GREEN = "#009E73"
 _PALETTE_VERMILLION = "#D55E00"
+_PALETTE_PURPLE = "#CC79A7"
+_PALETTE_SKY = "#56B4E9"
 ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     "IMOSS-Random": (_PALETTE_BLUE, "o"),  # rf (random oracle; a.k.a. IMOSS)
     "IMOSS-TPE": (_PALETTE_ORANGE, "^"),  # rf, hotpotqa, hpo   (a.k.a. IMABO)
@@ -95,9 +105,37 @@ ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     # hier_compare only; never co-occurs with IMOSS-Random, so blue is free.
     # The alpha ablation is the same method, so it keeps the colour and is
     # separated by marker (+ a dashed line in hier_compare's plot).
+    # NOTE: "Hier-UCB" (hier_compare figures) and "Hier-MAB" (the AutoRAG-HP
+    # baseline in the RF/HotpotQA/toy/counter-example figures) are the same
+    # method under two names from parallel work; the aliases below keep each
+    # family's raw series on its own style until the naming is unified.
     "Hier-UCB": (_PALETTE_BLUE, "v"),
     "Hier-UCB (ablation)": (_PALETTE_BLUE, "*"),  # alpha^h=1.5, alpha^l=0.5
     "Hier-UCB (fine)": (_PALETTE_BLUE, "P"),  # hier_compare_continuous: finer grid
+    # Factored baseline (AutoRAG-HP's two-level hierarchical MAB). Appears in
+    # the main RF regret figure ALONGSIDE the four core colors, so it cannot
+    # share a slot: it gets the palette's fifth Wong color (reddish purple),
+    # plus a unique marker.
+    "Hier-MAB": (_PALETTE_PURPLE, "*"),  # rf, hotpotqa (regret comparison)
+    # Continuous LR/SVM comparison: Hier-MAB run at two geometric-grid
+    # resolutions (10 vs 100 values per axis). They co-occur with each other
+    # (and with HOO-T's blue) but never with plain "Hier-MAB", so the 10-point
+    # variant keeps the family's purple/star; the 100-point one takes the
+    # remaining Wong color (sky blue) with its own marker.
+    "Hier-MAB-10": (_PALETTE_PURPLE, "*"),  # lr/svm (factored, 10-pt grid)
+    "Hier-MAB-100": (_PALETTE_SKY, "X"),  # lr/svm (factored, 100-pt grid)
+    # Counter-example landscapes: Hier-MAB at two grid resolutions in one
+    # figure. One family color (purple) for both -- the same method at
+    # different resolutions -- disambiguated by marker plus a per-level
+    # linestyle set locally in coordination_barrier_experiment.plot.
+    "Hier-MAB-6": (_PALETTE_PURPLE, "*"),  # toy counterexample (6-pt grid)
+    "Hier-MAB-11": (_PALETTE_PURPLE, "*"),  # toys + counter-examples (11-pt)
+    "Hier-MAB-21": (_PALETTE_PURPLE, "X"),  # toy counterexample (21-pt grid)
+    "Hier-MAB-101": (_PALETTE_PURPLE, "P"),  # toy counterexample (101-pt grid)
+    # Univariate-Parzen TPE (multivariate=False): same family as IMOSS-TPE,
+    # so same orange; unique marker (plus a dashed linestyle set locally in
+    # coordination_barrier_experiment) keeps the pair apart in one panel.
+    "IMOSS-TPE-univ": (_PALETTE_ORANGE, "d"),  # toy counterexample
     "Random": (_PALETTE_BLUE, "p"),  # hotpotqa (no overlap with IMOSS)
     "HOO-T": (_PALETTE_BLUE, "v"),  # hpo
     "StoSOO": (_PALETTE_GREEN, "<"),  # hpo
@@ -118,9 +156,23 @@ _ALGORITHM_ALIASES = {
     "imoss-tabpfn-pull": "IMOSS-TabPFN-pull",
     "ucb-air": "UCB-AIR",
     "ucbair": "UCB-AIR",
+    # Same method, two naming families (see the ALGORITHM_STYLES note):
+    # "hier-ucb"-spelled series keep hier_compare's blue identity, while
+    # "hier-mab"-spelled series (and their grid-size variants) keep the
+    # purple identity used by the RF/HotpotQA/toy/counter-example figures.
     "hier-ucb": "Hier-UCB",
     "hierucb": "Hier-UCB",
-    "hier-mab": "Hier-UCB",
+    "hier-mab": "Hier-MAB",
+    "hiermab": "Hier-MAB",
+    "autorag-hp": "Hier-MAB",
+    "hier-mab-10": "Hier-MAB-10",
+    "hier-mab-100": "Hier-MAB-100",
+    "hier-mab-6": "Hier-MAB-6",
+    "hier-mab-11": "Hier-MAB-11",
+    "hier-mab-21": "Hier-MAB-21",
+    "hier-mab-101": "Hier-MAB-101",
+    "imoss-tpe-univ": "IMOSS-TPE-univ",
+    "imoss-tpe-uni": "IMOSS-TPE-univ",
     "random": "Random",
     "random-search": "Random",
     "hoo-t": "HOO-T",
@@ -470,6 +522,7 @@ def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
 # deleted rf_tabular_bandit_plot.py, which these scripts imported from.
 _PRETTY_LABELS = {
     "imoss_tpe": "IMOSS-TPE",
+    "imoss_tpe_univ": "IMOSS-TPE-univ",
     "imoss": "IMOSS-Random",
     "imoss_random": "IMOSS-Random",
     "random_search": "Random Search",
@@ -477,15 +530,18 @@ _PRETTY_LABELS = {
     "imoss_tabpfn": "IMOSS-TabPFN",
     "imoss_tabpfn_pull": "IMOSS-TabPFN-pull",
     "ucb_air": "UCB-AIR",
+    "hier_mab": "Hier-MAB",
 }
 
 _CANONICAL_ORDER = [
     "IMOSS-Random",
     "IMOSS-TPE",
+    "IMOSS-TPE-univ",
     "IMOSS-TabFM",
     "IMOSS-TabPFN",
     "IMOSS-TabPFN-pull",
     "UCB-AIR",
+    "Hier-MAB",
 ]
 
 _BENCH_NAMES = {

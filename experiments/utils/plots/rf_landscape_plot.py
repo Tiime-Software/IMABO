@@ -186,7 +186,7 @@ def plot_landscape_reward_cdf(
         out_path = RESULTS_DIR / "paper_plots" / f"{tag}_landscape_reward_cdf.pdf"
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

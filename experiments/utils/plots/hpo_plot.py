@@ -245,7 +245,7 @@ def plot_performance_trajectories(
         )
         save_figure(out_path)
 
-    plt.show()
+    plt.close()
 
 
 def plot_cumulative_regret_over_iterations(
@@ -346,7 +346,7 @@ def plot_cumulative_regret_over_iterations(
         )
         save_figure(out_path)
 
-    plt.show()
+    plt.close()
 
 
 def plot_simple_regret_vs_iterations(
@@ -439,7 +439,7 @@ def plot_simple_regret_vs_iterations(
         )
         save_figure(out_path)
 
-    plt.show()
+    plt.close()
 
 
 def plot_combined_regrets(
@@ -571,7 +571,7 @@ def plot_combined_regrets(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 # Per-benchmark-row height (in) for plot_combined_regrets_grid, generated
@@ -772,7 +772,7 @@ def plot_combined_regrets_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

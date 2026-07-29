@@ -36,6 +36,7 @@ from tqdm import tqdm
 from imabo import IMABO, IMABOTabFM, IMABOTabPFN
 from imabo.optimizer import load_tabfm
 from imabo.tabpfn_optimizer import load_tabpfn
+from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.optuna_bandit import OptunaBandit
 from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
@@ -75,6 +76,7 @@ class Algorithm(Enum):
     UCB_AIR = "UCB-AIR"  # infinitely-many-armed bandit, arm-increasing rule + UCBV
     IMOSS_TABFM = "IMOSS-TABFM"  # IMOSS-TABFM
     IMOSS_TABPFN = "IMOSS-TABPFN"  # IMOSS with a TabPFN-3 explore oracle
+    HIER_MAB = "Hier-MAB"  # AutoRAG-HP's factored two-level hierarchical MAB
 
 
 def build_optimizer(
@@ -127,6 +129,12 @@ def build_optimizer(
         return OptunaBandit(search_space=SEARCH_SPACE, k=optuna_k, seed=seed)
     elif algorithm == Algorithm.UCB_AIR:
         return UCBAIR(search_space=SEARCH_SPACE, beta=beta, seed=seed)
+    elif algorithm == Algorithm.HIER_MAB:
+        # Hier-MAB needs each axis as an explicit finite set: n_points=11
+        # discretizes temperature to linspace(0, 1, 11); top_k (10 integer
+        # values) and the categorical axes are used as given. No beta -- it
+        # has no explore/exploit switching schedule.
+        return HierMAB(SEARCH_SPACE, n_points=11, seed=seed)
 
 
 def best_config_of(optimizer) -> dict | None:
@@ -562,6 +570,7 @@ def make_plot(foundation: Algorithm, n_samples: int, n_runs: int) -> None:
     tpe = algo_label(Algorithm.IMABO, beta=BETA)
     ucb = algo_label(Algorithm.UCB_AIR, beta=BETA)
     rnd = algo_label(Algorithm.RANDOM, beta=BETA)
+    hier = algo_label(Algorithm.HIER_MAB, beta=BETA)
     fm = algo_label(foundation, beta=BETA)
     display_overrides = {
         tpe: ALGO_DISPLAY_NAMES.get(Algorithm.IMABO.value, "IMOSS-TPE"),
@@ -571,7 +580,7 @@ def make_plot(foundation: Algorithm, n_samples: int, n_runs: int) -> None:
     fig_slug = foundation.value.lower().replace("-", "_")
     print(f"Drawing HotpotQA paper figure ({display_overrides[fm]})...")
     plot_hotpotqa_results(
-        algorithms=[tpe, fm, ucb, rnd],
+        algorithms=[tpe, fm, ucb, rnd, hier],
         n_samples=n_samples,
         n_runs=n_runs,
         save_fig=True,
