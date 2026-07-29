@@ -41,25 +41,19 @@ def plot_performance_trajectories(
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
     """
-    # Read summary CSV
     csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     df = pd.read_csv(csv_file)
 
-    # Check if we have raw data arrays for confidence ellipses
     has_raw_data = "simple_regrets" in df.columns and "sum_regrets" in df.columns
 
-    # Get unique algorithms and iterations
     algorithms = df["algorithm"].unique().tolist()
     n_evals = sorted(df["n_iterations"].unique())
 
-    # Markers for each algorithm
     base_markers = ["o", "s", "^", "D", "v", "<", ">", "p"]
     markers = [base_markers[i % len(base_markers)] for i in range(len(algorithms))]
 
-    # Create figure
     fig, ax = plt.subplots(figsize=(10, 8))
 
-    # Collect all data points and build trajectories
     all_xs, all_ys = [], []
     trajectories = {}
 
@@ -73,13 +67,11 @@ def plot_performance_trajectories(
         all_xs.extend(simple_regrets)
         all_ys.extend(total_regrets)
 
-    # Calculate median lines for quadrants
     x_min, x_max = min(all_xs), max(all_xs)
     y_min, y_max = min(all_ys), max(all_ys)
     x_mid = (x_min + x_max) / 2
     y_mid = (y_min + y_max) / 2
 
-    # Draw median lines
     ax.axhline(
         y=y_mid, color=RESEARCH_COLORS["neutral"], linestyle=":", alpha=0.4, linewidth=1
     )
@@ -87,7 +79,6 @@ def plot_performance_trajectories(
         x=x_mid, color=RESEARCH_COLORS["neutral"], linestyle=":", alpha=0.4, linewidth=1
     )
 
-    # Plot trajectories for each algorithm
     for i, algorithm in enumerate(algorithms):
         algo_data = df[df["algorithm"] == algorithm].sort_values("n_iterations")
 
@@ -96,10 +87,8 @@ def plot_performance_trajectories(
 
         color = get_algorithm_color(i)
 
-        # Draw confidence ellipses if raw data available
         if has_raw_data:
             for j, row in algo_data.iterrows():
-                # Parse array strings to numpy arrays
                 simple_regrets_raw = np.fromstring(
                     row["simple_regrets"].strip("[]"), sep=" "
                 )
@@ -117,7 +106,6 @@ def plot_performance_trajectories(
                         zorder=2,
                     )
 
-                    # Draw individual run points
                     ax.scatter(
                         simple_regrets_raw,
                         sum_regrets_raw,
@@ -129,7 +117,6 @@ def plot_performance_trajectories(
                         zorder=3,
                     )
 
-        # Draw trajectory lines with increasing alpha
         for j in range(len(xs) - 1):
             alpha = 0.4 + 0.2 * (j / (len(xs) - 1))
             ax.plot(
@@ -140,7 +127,6 @@ def plot_performance_trajectories(
                 alpha=alpha,
             )
 
-        # Draw scatter points with increasing size
         sizes = np.linspace(60, 120, len(xs))
         ax.scatter(
             xs,
@@ -155,7 +141,6 @@ def plot_performance_trajectories(
             zorder=5,
         )
 
-        # Add arrows showing direction of trajectory
         for j in range(len(xs) - 1):
             arrow_alpha = 0.3 + 0.2 * (j / (len(xs) - 1))
             ax.annotate(
@@ -173,7 +158,6 @@ def plot_performance_trajectories(
                 zorder=4,
             )
 
-        # Annotate middle points
         for j, (x, y, n_eval) in enumerate(zip(xs[1:-1], ys[1:-1], n_evals[1:-1])):
             ax.annotate(
                 f"{n_eval}",
@@ -186,7 +170,6 @@ def plot_performance_trajectories(
                 va="bottom",
             )
 
-    # Labels and title
     ax.set_xlabel(
         "Simple Regret (Best Point Found)", fontsize=adaptive_label_fontsize(ax)
     )
@@ -194,7 +177,6 @@ def plot_performance_trajectories(
         "Cumulative Regret (Total Regret)", fontsize=adaptive_label_fontsize(ax)
     )
 
-    # Calculate final ranking
     final_scores = []
     for algorithm in algorithms:
         xs, ys = trajectories[algorithm]
@@ -205,7 +187,6 @@ def plot_performance_trajectories(
 
     final_scores.sort(key=lambda x: x[1])
 
-    # Create ordered legend
     handles, labels = ax.get_legend_handles_labels()
     ordered_handles = []
     ordered_labels = []
@@ -232,7 +213,6 @@ def plot_performance_trajectories(
     ax.set_axisbelow(True)
     ax.tick_params(axis="both", which="major", labelsize=20)
 
-    # Remove top and right spines
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
@@ -262,24 +242,19 @@ def plot_cumulative_regret_over_iterations(
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
     """
-    # Read iterations CSV
     csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
     df = pd.read_csv(csv_file)
 
-    # Filter for the specific iteration count
     df = df[df["n_iterations"] == n_iterations]
 
     if df.empty:
         print(f"No data found for {n_iterations} iterations")
         return
 
-    # Get unique algorithms
     algorithms = df["algorithm"].unique()
 
-    # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Markers for each algorithm
     base_markers = ["o", "^", "s", "D", "v", "p"]
 
     for i, algo in enumerate(algorithms):
@@ -289,15 +264,12 @@ def plot_cumulative_regret_over_iterations(
         mean_regrets = algo_data["regret_mean"].values
         std_regrets = algo_data["regret_std"].values
 
-        # Calculate cumulative mean regret
-        cumulative_mean = np.cumsum(
-            mean_regrets
-        )  # / np.arange(1, len(mean_regrets) + 1)
+        # cumsum, not cumsum/n: this is total (not time-averaged) regret
+        cumulative_mean = np.cumsum(mean_regrets)
 
         color = get_algorithm_color(i)
         marker = base_markers[i % len(base_markers)]
 
-        # Plot line with markers
         ax.plot(
             iterations,
             cumulative_mean,
@@ -323,7 +295,6 @@ def plot_cumulative_regret_over_iterations(
     ax.set_axisbelow(True)
     ax.grid(True, alpha=0.3)
 
-    # Legend
     ax.legend(
         loc="best",
         fontsize=12,
@@ -333,7 +304,6 @@ def plot_cumulative_regret_over_iterations(
         framealpha=0.95,
     )
 
-    # Remove top and right spines
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
@@ -363,17 +333,13 @@ def plot_simple_regret_vs_iterations(
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
     """
-    # Read summary CSV
     csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     df = pd.read_csv(csv_file)
 
-    # Get unique algorithms
     algorithms = df["algorithm"].unique()
 
-    # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Markers for each algorithm
     base_markers = ["o", "^", "s", "D", "v", "p"]
 
     for i, algo in enumerate(algorithms):
@@ -386,7 +352,6 @@ def plot_simple_regret_vs_iterations(
         color = get_algorithm_color(i)
         marker = base_markers[i % len(base_markers)]
 
-        # Plot line with error bars
         ax.errorbar(
             n_iters,
             simple_regret_mean,
@@ -416,7 +381,6 @@ def plot_simple_regret_vs_iterations(
     ax.set_axisbelow(True)
     ax.grid(True, alpha=0.3)
 
-    # Legend
     ax.legend(
         loc="best",
         fontsize=12,
@@ -426,7 +390,6 @@ def plot_simple_regret_vs_iterations(
         framealpha=0.95,
     )
 
-    # Remove top and right spines
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
@@ -456,27 +419,22 @@ def plot_combined_regrets(
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
     """
-    # Read both CSVs
     iterations_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
     summary_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
 
     df_iterations = pd.read_csv(iterations_csv)
     df_summary = pd.read_csv(summary_csv)
 
-    # Filter iterations data for specific iteration count
     df_iterations = df_iterations[df_iterations["n_iterations"] == n_iterations]
 
     if df_iterations.empty:
         print(f"No data found for {n_iterations} iterations")
         return
 
-    # Get unique algorithms
     algorithms = df_iterations["algorithm"].unique()
 
-    # Create figure with 2 subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Markers for each algorithm
     base_markers = ["o", "^", "s", "D", "v", "p"]
 
     # --- LEFT PLOT: Cumulative Regret over Iterations ---
@@ -486,15 +444,12 @@ def plot_combined_regrets(
         iterations = algo_data["iteration"].values
         mean_regrets = algo_data["regret_mean"].values
 
-        # Calculate cumulative mean regret
-        cumulative_mean = np.cumsum(
-            mean_regrets
-        )  # / np.arange(1, len(mean_regrets) + 1)
+        # cumsum, not cumsum/n: this is total (not time-averaged) regret
+        cumulative_mean = np.cumsum(mean_regrets)
 
         color = get_algorithm_color(i)
         marker = base_markers[i % len(base_markers)]
 
-        # Plot line with markers
         ax1.plot(
             iterations,
             cumulative_mean,
@@ -531,7 +486,6 @@ def plot_combined_regrets(
         color = get_algorithm_color(i)
         marker = base_markers[i % len(base_markers)]
 
-        # Plot line with error bars
         ax2.errorbar(
             n_iters,
             simple_regret_mean,
@@ -558,7 +512,6 @@ def plot_combined_regrets(
     ax2.spines["top"].set_visible(False)
     ax2.spines["right"].set_visible(False)
 
-    # Create common legend
     handles, labels = ax1.get_legend_handles_labels()
     create_figure_legend(fig, handles, labels, ncol=len(algorithms))
 

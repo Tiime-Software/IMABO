@@ -1,4 +1,4 @@
-"""Delay/censoring model calibrated from real production feedback timing."""
+"""Delay/censoring model calibrated from an empirical feedback-timing distribution."""
 
 from __future__ import annotations
 
@@ -17,11 +17,11 @@ _FIT = {
 @dataclass
 class DelayModel:
     """Samples per-pull feedback delay in simulator steps, calibrated from
-    real production feedback timing.
+    an empirical feedback-timing distribution.
 
     1 step is treated as 1 hour, matching the unit the log-normal fit was
     computed in -- the same simplifying assumption used by the original
-    gungnir port.
+    calibration this was ported from.
     """
 
     mu: float = _FIT["mu"]

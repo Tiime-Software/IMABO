@@ -2,7 +2,7 @@
 
 Feedback for a suggested configuration doesn't arrive immediately: it's
 scheduled some number of steps in the future (drawn from a delay model, e.g.
-:class:`~experiments.benchmarks.delayed.delay_model.GleipnirDelayModel`) and
+:class:`~experiments.benchmarks.delayed.delay_model.DelayModel`) and
 delivered out of order via a min-heap, mirroring how real asynchronous
 feedback (e.g. a user vote on a generated item) actually reaches the
 optimizer. A pull not observed within ``patience_steps`` of being suggested
