@@ -2,13 +2,15 @@
 
 IMABO is an online hyperparameter optimization algorithm that combines multi-armed bandit exploitation (MOSS) with Bayesian exploration (TPE) over a dynamically expanding configuration space.
 
+This repository contains the `imabo` package itself, plus every experiment, baseline, and plotting script used to produce the results in the paper.
+
 ## Installation
 
 ```bash
 pip install -e .
 ```
 
-To also install experiment dependencies (plots, async server client, etc.):
+To also install the experiment dependencies (plotting, async server client, TabPFN, etc.):
 
 ```bash
 pip install -e ".[experiments]"
@@ -58,19 +60,19 @@ This ensures the configuration space grows sublinearly with $O(t^\beta)$, mainta
 
 ## API Reference
 
-
 | Parameter          | Type       | Default           | Description                            |
 | ------------------ | ---------- | ----------------- | -------------------------------------- |
 | `search_space`     | `dict`     | required          | Parameter definitions (see below)      |
-| `seed`             | `int       | None`             | `42`                                   |
+| `seed`             | `int \| None` | `42`           | Random seed                            |
 | `n_startup_trials` | `int`      | `10`              | Random initial configurations          |
 | `beta`             | `float`    | `0.8`             | Switching exponent                     |
 | `switch_strategy`  | `str`      | `"beta"`          | `"beta"` (sync) or `"delayed"` (async) |
 | `n_ei_candidates`  | `int`      | `24`              | EI candidates sampled from l(x)        |
-| `gamma_func`       | `callable` | 30% quantile      | Good/bad split function                |
+| `gamma_func`       | `callable` | top 30% quantile  | Good/bad split function                |
 | `multivariate`     | `bool`     | `True`            | Multivariate Parzen estimation         |
+| `use_tpe`          | `bool`     | `True`            | Disable to fall back to random exploration (ablation) |
+| `tpe_split_bound`  | `str`      | `"moss"`          | `"moss"` or `"lcb"` index used to rank arms when splitting good/bad |
 | `memory`           | `Memory`   | `InMemoryStorage` | Custom storage                         |
-
 
 ### Search Space Format
 
@@ -88,6 +90,11 @@ This ensures the configuration space grows sublinearly with $O(t^\beta)$, mainta
 - `optimizer.suggest() -> dict` — Returns the next configuration to evaluate.
 - `optimizer.observe(reward: float)` — Reports the reward for the last suggestion.
 - `optimizer.best_config -> dict | None` — Best configuration found so far.
+
+### Other Optimizer Variants
+
+- `IMABOTabFM` — TPE oracle replaced by a Google TabFM foundation-model prior.
+- `IMABOTabPFN` — TPE oracle replaced by a Prior-Labs TabPFN-3 foundation-model prior (requires the `experiments` extra, which includes `tabpfn`).
 
 ## Custom Memory
 
@@ -109,50 +116,90 @@ optimizer = IMABO(search_space=space, memory=RedisMemory(...))
 
 ## Reproducing Paper Experiments
 
-The `experiments/` directory contains all scripts used in the paper. Install the experiment dependencies first:
+Install the experiment dependencies first:
 
 ```bash
 pip install -e ".[experiments]"
 ```
 
-Each experiment follows the same two-step workflow: run the experiment to generate results under `results/`, then plot from those results. The two foundation-model experiments run every method (including the `IMOSS-TabFM` and `IMOSS-TabPFN` oracles) and plot in a single script (add `--plot-only` to only replot). HotpotQA needs an `OPENROUTER_API_KEY` in a `.env` file.
+Every experiment follows the same pattern: run the script to (re)generate results under `results/` — runs are seed-checkpointed and resumable, so re-running skips completed seeds — then plot from those results (usually the same script, or a companion script in `experiments/utils/plots/`). Pass `--help` to any script for its options; most support `--plot-only` to replot without rerunning.
+
+| Script | What it reproduces |
+| --- | --- |
+| `experiments.toy_experiment` | IMABO vs. tree baselines (StoSOO, HOO-T, Stroquool) on synthetic toy functions (sin1, garland, rastrigin). |
+| `experiments.hpo_experiment` | IMABO vs. tree baselines on real HPO benchmarks (Logistic Regression, SVM via HPOBench). **Requires the HPO benchmark server** (see Docker below). |
+| `experiments.rf_arm_distribution_experiment` | Per-iteration arm-choice distribution for every method, including the `IMOSS-TabFM` and `IMOSS-TabPFN` foundation-model oracles, on the RF tabular grid. |
+| `experiments.ablation_experiment` | Ablations: (1) TPE oracle impact (`use_tpe=False`) across dimensions, (2) MOSS oracle / `k` impact vs. `OptunaBandit`. |
+| `experiments.delayed_feedback_experiment` | Delay-aware switching (`switch_strategy="delayed"`) vs. delay-oblivious IMABO under censored/delayed rewards, on LCBench (YAHPO-Gym) and NAS-Bench-201. Needs one-time setup — see `experiments/benchmarks/delayed/README.md`. |
+| `experiments.hotpotqa_experiment` | HotpotQA online-HPO figure; runs every method including the foundation-model oracles. Requires an `OPENROUTER_API_KEY` (in a `.env` file or the environment). |
+| `experiments.factored_baseline_experiment` | Hier-MAB (AutoRAG-HP) as a factored baseline on the discrete RF grid — tests whether coordinate-at-a-time credit assignment is competitive. |
+| `experiments.coordination_barrier_experiment` | Synthetic counterexamples where reaching the global mode requires moving every coordinate together, illustrating where factored methods like Hier-MAB stall. |
+| `experiments.reward_structure_analysis` | Offline diagnostic: additive-variance share and multilinear (Tucker) rank of each RF benchmark's reward tensor, independent of any bandit run. |
+
+Example invocations:
 
 ```bash
-python -m experiments.rf_arm_distribution_experiment   # RF/HPOBench, then plots
-python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN   # or IMOSS-TABFM
+python -m experiments.toy_experiment
+python -m experiments.rf_arm_distribution_experiment                          # all algorithms x all benchmarks
+python -m experiments.rf_arm_distribution_experiment --algorithm IMOSS-TabPFN # single method
+python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN            # or IMOSS-TABFM
+python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN --plot-only
 ```
 
-Pass `--help` to either script for the options.
+### HPO benchmark server (Docker)
 
----
+`hpo_experiment` (and anything using HPOBench, e.g. Logistic Regression / SVM) needs the bundled HPOBench server running:
+
+```bash
+docker compose up hpo-server
+```
+
+This builds a container with a Python 3.7 conda env and the vendored `HPOBench/` source, and exposes it on `localhost:8901`. A `dev` service with the same image is also available for interactive use (`docker compose run dev`).
+
+### Baselines implemented (`experiments/baselines/`)
+
+- `stroquool.py` — StoSOO, HOO-T, StroquOOL, Sequool (tree-based continuous bandits) + `TimedOptimizer` wrapper.
+- `optuna_bandit.py` — `OptunaBandit`, a k-averaging wrapper around Optuna's TPE sampler.
+- `random_search.py` — uniform random search.
+- `ucb_air.py` — UCB-AIR (Wang, Audibert & Munos), infinitely-many-armed bandit with the Arm-Increasing Rule.
+- `qrm2.py` — QRM2, parameter-free quantile-regret minimization (Roy Chaudhuri & Kalyanakrishnan, UAI 2018).
+- `dttts.py` — D-TTTS, Dynamic Top-Two Thompson Sampling (Shang, Kaufmann & Valko, AutoML@ICML 2019).
+- `hier_mab.py` — Hier-MAB, the two-level hierarchical bandit from AutoRAG-HP (Fu et al., EMNLP Findings 2024).
 
 ## Repository Layout
 
 ```
-imabo/                         # core IMABO package
+imabo/                              # core IMABO package
+  optimizer.py                      # IMABO, FiniteIMABO, IMABOTabFM
+  tabpfn_optimizer.py                # IMABOTabPFN
+  moss.py                           # MOSS-anytime, UCB, KL-UCB indices
+  tpe.py                            # TPE oracle (Parzen estimators, gamma/weight functions)
+  memory.py                         # Memory interface, InMemoryStorage, ArmStats/CurrentState
+  types.py                          # ArmKey, ArmConfig
 experiments/
-  toy_experiment.py            # toy benchmark comparison (IMABO vs tree baselines)
-  hpo_experiment.py            # real HPO benchmark comparison (IMABO vs tree baselines)
-  ablation_experiment.py       # ablation study (TPE oracle + k impact)
-  baselines/
-    stroquool.py               # StoSOO, HOO-T, StroquOOL, Sequool + TimedOptimizer
-    optuna_bandit.py           # OptunaBandit (k-averaging wrapper for Optuna TPE)
+  toy_experiment.py                  # toy benchmark comparison
+  hpo_experiment.py                  # real HPO benchmark comparison (needs Docker server)
+  rf_arm_distribution_experiment.py  # arm-choice distribution incl. foundation-model oracles
+  ablation_experiment.py             # TPE oracle + k-impact ablations
+  delayed_feedback_experiment.py     # delayed/censored reward experiment
+  hotpotqa_experiment.py             # HotpotQA online-HPO experiment
+  factored_baseline_experiment.py    # Hier-MAB on the discrete RF grid
+  coordination_barrier_experiment.py # synthetic factored-method counterexamples
+  reward_structure_analysis.py       # offline reward-landscape diagnostics
+  baselines/                        # StoSOO/HOO-T/Stroquool, OptunaBandit, Random, UCB-AIR, QRM2, D-TTTS, Hier-MAB
   benchmarks/
-    config.py                  # BENCHMARKS dict (param specs, fidelity, metrics)
-    hpo_wrapper.py             # HPOBenchmark client (array_to_config, eval_config, …)
-    toys/
-      toy_functions.py         # sin1, garland, rastrigin objective functions
-    hpo_bench/
-      server.py                # HTTP server (runs inside Docker)
-      client.py                # async HTTP client
+    config.py                       # BENCHMARKS dict (param specs, fidelity, metrics)
+    hpo_wrapper.py                  # HPOBenchmark client (array_to_config, eval_config, …)
+    toys/                           # sin1, garland, rastrigin objective functions
+    hpo_bench/                      # HTTP server (Docker) + async client for HPOBench
+    delayed/                        # LCBench / NAS-Bench-201 bandits, delay simulator, one-time setup scripts
+    hotpotqa/                       # HotpotQA benchmark, embeddings, metrics
   utils/
-    stats.py                   # calculate_statistics, CSV save helpers
-    plot_configs.py            # Wong colorblind palette, set_research_style()
-    toy_plot.py                # plots for toy_experiment results
-    hpo_plot.py                # plots for hpo_experiment results
-    ablation_plot.py           # plots for ablation_experiment results
-results/                       # generated CSVs and PDFs (git-ignored)
-HPOBench/                      # HPOBench source (installed in Docker image)
+    stats.py                        # calculate_statistics, CSV save helpers
+    normalized.py                   # normalized-regret helpers
+    plots/                          # one plotting module per experiment, shared plot_configs.py (Wong palette, paper style)
+results/                             # generated CSVs and PDFs (git-ignored)
+HPOBench/                            # vendored HPOBench source (installed in the Docker image)
 Dockerfile
 docker-compose.yml
 ```
@@ -163,4 +210,3 @@ docker-compose.yml
 pip install -e ".[dev]"
 pytest
 ```
-

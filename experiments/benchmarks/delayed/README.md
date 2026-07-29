@@ -347,6 +347,19 @@ diagnostics):
   benchmark instances, vs. delay severity (left) and censoring severity
   (right).
 
+## Criteo (unused, assets not shipped)
+
+`criteo_bandit.py` and `build_criteo_asset.py` build a delay/conversion
+benchmark from the Criteo Sponsored Search Conversion Log, but nothing in the
+current pipeline (`BENCHMARK` above only supports `"lcbench"` /
+`"nasbench201"`) imports it. The derived assets (`criteo_*` under `assets/`)
+are **not committed** — that dataset is terms-of-use gated
+(https://ailab.criteo.com/criteo-sponsored-search-conversion-log-dataset/), so
+redistributing data derived from it isn't ours to do. To use this benchmark,
+download the raw log yourself under those terms and run
+`python -m experiments.benchmarks.delayed.build_criteo_asset` to regenerate
+the assets locally.
+
 ## Running everything
 
 ```bash

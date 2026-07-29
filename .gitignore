@@ -14,3 +14,7 @@ results/
 data/
 experiments/test_exp/
 
+# Derived from the terms-of-use-gated Criteo Sponsored Search Conversion Log;
+# regenerate locally with experiments.benchmarks.delayed.build_criteo_asset.
+experiments/benchmarks/delayed/assets/criteo_*
+
