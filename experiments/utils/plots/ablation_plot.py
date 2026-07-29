@@ -2,11 +2,13 @@
 Plots for ablation study results (experiments/ablation_experiment.py).
 """
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from experiments.ablation_experiment import BETA, K_N_ITER
 from experiments.utils.plots.plot_configs import (
     adaptive_label_fontsize,
     create_figure_legend,
@@ -15,9 +17,6 @@ from experiments.utils.plots.plot_configs import (
     paper_style,
     save_figure,
 )
-
-from experiments.ablation_experiment import K_N_ITER, BETA
-
 
 RESULTS_DIR = Path(__file__).parents[3] / "results" / "ablation_experiment"
 

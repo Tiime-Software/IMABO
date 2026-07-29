@@ -43,8 +43,8 @@ def ensure_data(data_dir: Path) -> None:
 
 def register_and_verify(data_dir: Path) -> None:
     """Point yahpo_gym at the local data dir and run a smoke-test query."""
-    from yahpo_gym import local_config, benchmark_set
     import yahpo_gym.benchmarks.lcbench  # noqa: F401
+    from yahpo_gym import benchmark_set, local_config
 
     local_config.init_config()
     local_config.set_data_path(str(data_dir))

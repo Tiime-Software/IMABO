@@ -1,10 +1,11 @@
 """Plot dttts_compare_results.json in the same style as the toy benchmark figure."""
 
 import json
-import numpy as np
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from pathlib import Path
+import numpy as np
 
 from experiments.utils.plots.plot_configs import (
     adaptive_label_fontsize,

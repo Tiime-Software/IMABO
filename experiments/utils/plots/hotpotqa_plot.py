@@ -1,22 +1,22 @@
 """Plot functions for HotpotQA multi-run experiment results."""
 
 import json
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from pathlib import Path
 
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
 from experiments.utils.plots.plot_configs import (
-    set_research_style,
+    adaptive_label_fontsize,
     algorithm_style,
     create_figure_legend,
     get_algorithm_color,
     paper_style,
     save_figure,
-    adaptive_label_fontsize,
+    set_research_style,
 )
-from experiments.hotpotqa_experiment import BETA
 
 RESULTS_DIR = Path(__file__).parents[3] / "results" / "hotpotqa"
 

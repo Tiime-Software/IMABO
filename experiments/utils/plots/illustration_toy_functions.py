@@ -1,16 +1,17 @@
 """Illustration of sin1, garland, and rastrigin as 1D line plots."""
 
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.utils.plots.plot_configs import (
     ALGORITHM_COLORS,
     paper_style,
     save_figure,
     set_research_style,
 )
-from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 
 set_research_style()
 

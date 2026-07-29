@@ -13,7 +13,6 @@ from imabo import (
     ucb_siri,
 )
 
-
 SIMPLE_SEARCH_SPACE = {
     "x1": {"lower": 0.0, "upper": 1.0},
     "x2": {"lower": 0.0, "upper": 1.0},
@@ -62,7 +61,9 @@ class TestIMABO:
         opt.observe(0.7)  # in [0,1]: no error
         # explicit opt-out disables the check
         opt2 = IMABO(
-            search_space=SIMPLE_SEARCH_SPACE, seed=42, n_startup_trials=3,
+            search_space=SIMPLE_SEARCH_SPACE,
+            seed=42,
+            n_startup_trials=3,
             check_reward_range=False,
         )
         opt2.suggest()

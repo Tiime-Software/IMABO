@@ -1,4 +1,5 @@
 import numpy as np
+
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 
 

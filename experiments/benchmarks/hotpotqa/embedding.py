@@ -1,9 +1,10 @@
 import hashlib
 import pickle
+from pathlib import Path
+
 import numpy as np
 from rank_bm25 import BM25Okapi
 from tqdm import tqdm
-from pathlib import Path
 
 CACHE_FOLDER = Path(__file__).parents[3] / "data" / ".cache"
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)

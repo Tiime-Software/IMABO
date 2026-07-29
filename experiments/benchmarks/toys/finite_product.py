@@ -281,14 +281,14 @@ class PlantedNKFinite(FiniteProductBenchmark):
 
 if __name__ == "__main__":
     # Demo: run IMABO on each finite-product benchmark and plot cumulative regret.
-    import csv
     import json
     from pathlib import Path
 
-    from imabo import IMABO, IMABOTabFM
-    from tqdm import tqdm
-    from experiments.baselines.random_search import RandomSearch
     import matplotlib.pyplot as plt
+    from tqdm import tqdm
+
+    from experiments.baselines.random_search import RandomSearch
+    from imabo import IMABO, IMABOTabFM
 
     RESULT_DIR = Path(__file__).parent.parent.parent.parent / "results"
     RESULT_DIR.mkdir(parents=True, exist_ok=True)

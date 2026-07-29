@@ -61,7 +61,6 @@ from imabo.memory import (
 from imabo.optimizer import IMABO
 from imabo.types import ArmConfig, ArmKey
 
-
 # Concurrent TabPFN fit/predict from multiple threads hard-crashes the whole
 # process (no Python traceback) on Apple-silicon Metal/MPS, so on that device
 # the oracle's fit+score block is serialized across threads. On CUDA/CPU the

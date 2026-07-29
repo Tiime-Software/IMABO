@@ -20,7 +20,6 @@ the LLM calls, and the TabPFN extra for the ``IMOSS-TABPFN`` arm
 (``pip install -e ".[experiments]"``).
 """
 
-from pathlib import Path
 import argparse
 import csv
 import json
@@ -29,33 +28,36 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
-from dotenv import load_dotenv
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+from joblib.memory import Memory
+from openrouter import OpenRouter
+from openrouter.errors import (
+    ProviderOverloadedResponseError,
+    ResponseValidationError,
+    ServiceUnavailableResponseError,
+    TooManyRequestsResponseError,
+)
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 from tqdm import tqdm
-from imabo import IMABO, IMABOTabFM, IMABOTabPFN
-from imabo.optimizer import load_tabfm
-from imabo.tabpfn_optimizer import load_tabpfn
+
 from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.optuna_bandit import OptunaBandit
 from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.hotpotqa.benchmark import HotpotQABenchmark
 from experiments.benchmarks.hotpotqa.types import Result
-from openrouter import OpenRouter
-from openrouter.errors import (
-    TooManyRequestsResponseError,
-    ProviderOverloadedResponseError,
-    ServiceUnavailableResponseError,
-    ResponseValidationError,
-)
-from joblib.memory import Memory
-from tenacity import (
-    retry,
-    wait_random_exponential,
-    stop_after_attempt,
-    retry_if_exception_type,
-)
+from imabo import IMABO, IMABOTabFM, IMABOTabPFN
+from imabo.optimizer import load_tabfm
+from imabo.tabpfn_optimizer import load_tabpfn
 
 memory = Memory(location=Path(__file__).parents[1] / "data" / ".cache", verbose=0)
 

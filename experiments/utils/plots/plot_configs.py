@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import matplotlib
+import numpy as np
 
 # File-only plotting: every figure in this package is written to a PDF via
 # save_figure/savefig, never displayed. Forcing the non-interactive Agg

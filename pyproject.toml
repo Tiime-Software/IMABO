@@ -30,11 +30,21 @@ experiments = [
     "tqdm>=4.0",
     "joblib>=1.2",
     "aiohttp>=3.8",
-    "nest-asyncio>=1.5",
-    "scipy>=1.10",
     "pandas>=2.0",
-    "tabpfn>=8.1,<9",
     "scikit-learn>=1.6",
+    # HotpotQA experiment (experiments/hotpotqa_experiment.py, benchmarks/hotpotqa/)
+    "beir>=2.2",
+    "python-dotenv>=1.0",
+    "nltk>=3.9",
+    "openrouter>=0.10",
+    "rank-bm25>=0.2",
+    "sentence-transformers>=3.0",
+    "tenacity>=9.0",
+    # Foundation-model oracles (IMABOTabFM / IMABOTabPFN in imabo/optimizer.py, tabpfn_optimizer.py)
+    "tabpfn>=8.1,<9",
+    "huggingface_hub>=0.24",
+    "tabfm>=1.0",
+    "torch>=2.2",
 ]
 
 [project.urls]
@@ -45,8 +55,9 @@ include = ["imabo*", "experiments*"]
 namespaces = true
 
 [tool.ruff]
-line-length = 100
+line-length = 150
 target-version = "py310"
+extend-exclude = ["HPOBench"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

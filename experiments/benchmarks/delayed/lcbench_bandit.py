@@ -119,8 +119,8 @@ class LCBenchMixedBenchmark:
         # Imported lazily so importing this module never requires yahpo_gym
         # (only constructing the benchmark does) -- matches how optimizer.py
         # treats the optional TabFM dependency.
-        from yahpo_gym import benchmark_set
         import yahpo_gym.benchmarks.lcbench  # noqa: F401  (registers the scenario)
+        from yahpo_gym import benchmark_set
 
         self.instance = str(instance)
         self.bm_id = self.instance  # filename tag

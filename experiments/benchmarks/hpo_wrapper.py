@@ -1,14 +1,14 @@
-from experiments.benchmarks.config import BENCHMARKS
-from typing import Any
+import logging
 import math
-import numpy as np
 import random
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 from joblib import Memory
 
+from experiments.benchmarks.config import BENCHMARKS
 from experiments.benchmarks.hpo_bench.client import api_call
-
-import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("hpo_wrapper")

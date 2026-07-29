@@ -1,11 +1,13 @@
-from pathlib import Path
 import json
 import time
+from pathlib import Path
+
 import numpy as np
-from experiments.benchmarks.hotpotqa.embedding import BM25Index, DenseIndex
-from experiments.benchmarks.hotpotqa.metrics import compute_reward, Reward
-from experiments.benchmarks.hotpotqa.types import Result
 from beir.datasets.data_loader import GenericDataLoader
+
+from experiments.benchmarks.hotpotqa.embedding import DenseIndex
+from experiments.benchmarks.hotpotqa.metrics import Reward, compute_reward
+from experiments.benchmarks.hotpotqa.types import Result
 
 
 class HotpotQABenchmark:
@@ -94,7 +96,7 @@ class HotpotQABenchmark:
                 replace=False,
             ).tolist()
             corpus = {d: corpus[d] for d in list(relevant) + extra}
-        print(f"--- Loading Embeddings ---")
+        print("--- Loading Embeddings ---")
         start_time = time.time()
         # self._bm25 = BM25Index(corpus)
         # bm25_time = time.time()

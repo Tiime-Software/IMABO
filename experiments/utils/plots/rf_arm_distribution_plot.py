@@ -9,8 +9,8 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 from experiments.utils.plots.plot_configs import (
     _PRETTY_LABELS,

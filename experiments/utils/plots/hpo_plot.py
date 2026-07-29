@@ -2,13 +2,15 @@
 Plots for real HPO benchmark experiment results (experiments/hpo_experiment.py).
 """
 
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from pathlib import Path
 
 from experiments.hpo_experiment import BETA
 from experiments.utils.plots.plot_configs import (
+    RESEARCH_COLORS,
     adaptive_label_fontsize,
     algorithm_style,
     confidence_ellipse,
@@ -18,7 +20,6 @@ from experiments.utils.plots.plot_configs import (
     paper_style,
     save_figure,
     set_research_style,
-    RESEARCH_COLORS,
 )
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"

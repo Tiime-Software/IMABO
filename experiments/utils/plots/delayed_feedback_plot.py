@@ -968,8 +968,8 @@ def plot_delay_distribution(
     if BENCHMARK == "nasbench201":
         from experiments.benchmarks.delayed.delay_model import RuntimeDelayModel
         from experiments.benchmarks.delayed.nasbench201_bandit import (
-            NASBench201Benchmark,
             NB201_OPS,
+            NASBench201Benchmark,
         )
         from experiments.benchmarks.delayed.simulator import patience_for_quantile
 

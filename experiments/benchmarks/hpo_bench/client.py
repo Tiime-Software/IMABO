@@ -2,15 +2,14 @@
 
 import asyncio
 import atexit
+import os
 import signal
 import subprocess
 import sys
-import os
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
-
 
 # Host-side port of the hpo-server container (see docker-compose.yml: mapped
 # to 8901 because localhost:8000 is occupied by an unrelated host service).

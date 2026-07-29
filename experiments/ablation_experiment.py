@@ -19,8 +19,8 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.optuna_bandit import OptunaBandit
+from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.utils.stats import (
     calculate_statistics,
     save_iterations_to_csv,

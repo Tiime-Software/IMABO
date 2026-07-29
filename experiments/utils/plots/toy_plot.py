@@ -2,20 +2,21 @@
 Plots for toy benchmark experiment results (experiments/toy_experiment.py).
 """
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.lines import Line2D
+
 from experiments.utils.plots.plot_configs import (
+    RESEARCH_COLORS,
     confidence_ellipse,
     display_name,
     get_algorithm_color,
     paper_style,
     save_figure,
     set_research_style,
-    RESEARCH_COLORS,
 )
 
 RESULTS_DIR = Path(__file__).parents[3] / "results"

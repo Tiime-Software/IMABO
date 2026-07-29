@@ -1,9 +1,10 @@
-from experiments.benchmarks.hotpotqa.types import Reward
-from collections import Counter
 import re
 import string
+from collections import Counter
+
 from nltk.stem import PorterStemmer
 
+from experiments.benchmarks.hotpotqa.types import Reward
 
 _stemmer = PorterStemmer()
 

@@ -19,9 +19,9 @@ Two separate figures:
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from experiments.benchmarks.rf_tabular_bandit import (
     PARAM_NAMES,

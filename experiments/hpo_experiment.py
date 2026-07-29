@@ -25,6 +25,8 @@ from typing import TypedDict
 
 from tqdm import tqdm
 
+from experiments.baselines.hier_mab import HierMAB
+from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.benchmarks.config import BENCHMARKS
 from experiments.benchmarks.hpo_bench.client import (
     api_call,
@@ -32,8 +34,6 @@ from experiments.benchmarks.hpo_bench.client import (
     stop_hpo_server,
 )
 from experiments.benchmarks.hpo_wrapper import HPOBenchmark
-from experiments.baselines.hier_mab import HierMAB
-from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.utils.stats import calculate_statistics
 from imabo import IMABO
 
