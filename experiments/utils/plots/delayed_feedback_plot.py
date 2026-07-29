@@ -186,7 +186,7 @@ def plot_cumulative_regret_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_pending_queue_grid(
@@ -254,7 +254,7 @@ def plot_pending_queue_grid(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_delay_distribution(
@@ -301,7 +301,7 @@ def plot_delay_distribution(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_regret_vs_arrivals(
@@ -393,7 +393,7 @@ def plot_regret_vs_arrivals(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def _load_severity_regret(
@@ -575,7 +575,7 @@ def plot_regret_vs_severity(
         )
         save_figure(out_path, bbox_inches="tight")
 
-    plt.show()
+    plt.close()
 
 
 def plot_regret_vs_delay_severity(

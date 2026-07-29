@@ -5,6 +5,7 @@ Usage (from repo root):
     python -m experiments.toy_experiment
 """
 
+import json
 from enum import Enum
 from pathlib import Path
 from typing import TypedDict
@@ -14,6 +15,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
+from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.utils.stats import (
     calculate_statistics,
@@ -24,6 +26,10 @@ from imabo import IMABO
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
+# Per-(function, budget, seed, algorithm) checkpoints: reruns skip finished
+# work and adding an algorithm later never recomputes the others.
+CKPT_DIR = RESULT_DIR / "toy_runs"
+CKPT_DIR.mkdir(exist_ok=True)
 
 BETA = 0.5
 
@@ -33,6 +39,9 @@ class Algorithm(Enum):
     STOSOO = "StoSOO"
     HOO_T = "HOO-T"
     STROQUOOL = "Stroquool"
+    # Factored baseline (AutoRAG-HP) on an 11-point grid per axis
+    # (linspace(lower, upper, 11) per coordinate via HierMAB.axis_values).
+    HIER_MAB_11 = "Hier-MAB-11"
 
 
 class RegretData(TypedDict):
@@ -48,6 +57,34 @@ def _rescale_to_search_space(z: np.ndarray, search_space: dict) -> np.ndarray:
     return lower + (upper - lower) * np.asarray(z)
 
 
+def _build_optimizer(
+    algo: Algorithm,
+    search_space: dict,
+    dim: int,
+    n_iterations: int,
+    seed: int,
+    beta: float,
+):
+    """(optimizer, is_xarm_style) for one algorithm. Tree-based algorithms
+    suggest points in [0,1]^dim; IMABO and Hier-MAB suggest config dicts on
+    the native domain."""
+    if algo == Algorithm.IMABO:
+        return (
+            IMABO(search_space=search_space, seed=seed, multivariate=False,
+                  beta=beta),
+            False,
+        )
+    if algo == Algorithm.STOSOO:
+        return TimedOptimizer(stosoo, n_iterations, dim), True
+    if algo == Algorithm.HOO_T:
+        return TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0), True
+    if algo == Algorithm.STROQUOOL:
+        return TimedOptimizer(stroquool, n_iterations, dim), True
+    if algo == Algorithm.HIER_MAB_11:
+        return HierMAB(search_space, n_points=11, seed=seed), False
+    raise ValueError(f"unknown algorithm: {algo!r}")
+
+
 def run_optimization(
     function_name: str,
     dim: int,
@@ -55,40 +92,37 @@ def run_optimization(
     n_iterations: int = 1000,
     seed: int = 42,
 ) -> dict[str, RegretData]:
-    obj_func = ObjectiveFunctions(dim=dim, noise_seed=seed)
-    func = obj_func.get_function_by_name(function_name)
-    func_noiseless = obj_func.get_function_by_name(function_name, noise=False)
-    fmax = obj_func.get_theoretical_max(function_name)
-    search_space = obj_func.get_search_space(function_name)
+    """Run one seed of the experiment, checkpointed per algorithm.
 
-    if func is None:
-        raise ValueError(f"Unknown function: {function_name}")
-
-    imabo_opt = IMABO(
-        search_space=search_space,
-        seed=seed,
-        multivariate=False,
-        beta=beta,
-    )
-    stosoo_opt = TimedOptimizer(stosoo, n_iterations, dim)
-    hoo_t_opt = TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0)
-    stroquool_opt = TimedOptimizer(stroquool, n_iterations, dim)
-
-    # (enum, optimizer, is_xarm_style)
-    opt_config = [
-        (Algorithm.IMABO, imabo_opt, False),
-        (Algorithm.STOSOO, stosoo_opt, True),
-        (Algorithm.HOO_T, hoo_t_opt, True),
-        (Algorithm.STROQUOOL, stroquool_opt, True),
-    ]
-
-    regrets: dict[str, RegretData] = {
-        algo.value: {"regrets": [], "simple_regrets": float("inf")}
-        for algo in Algorithm
-    }
-
-    for algo, opt, is_xarm in opt_config:
+    Each algorithm gets its own ObjectiveFunctions instance so its noise
+    stream depends only on the seed, not on which algorithms ran before it in
+    the same process -- a checkpoint-resumed run is identical to a fresh one.
+    """
+    regrets: dict[str, RegretData] = {}
+    for algo in Algorithm:
         opt_name = algo.value
+        ckpt = (
+            CKPT_DIR
+            / f"{function_name}_{dim}D_{n_iterations}iters_seed{seed}_{opt_name}.json"
+        )
+        if ckpt.exists():
+            with open(ckpt) as f:
+                regrets[opt_name] = json.load(f)
+            continue
+
+        obj_func = ObjectiveFunctions(dim=dim, noise_seed=seed)
+        func = obj_func.get_function_by_name(function_name)
+        func_noiseless = obj_func.get_function_by_name(function_name, noise=False)
+        fmax = obj_func.get_theoretical_max(function_name)
+        search_space = obj_func.get_search_space(function_name)
+        if func is None:
+            raise ValueError(f"Unknown function: {function_name}")
+
+        opt, is_xarm = _build_optimizer(
+            algo, search_space, dim, n_iterations, seed, beta
+        )
+
+        data: RegretData = {"regrets": [], "simple_regrets": float("inf")}
         for _ in tqdm(range(n_iterations), desc=f"Running {opt_name}", leave=False):
             if is_xarm and opt.done:
                 continue
@@ -100,13 +134,17 @@ def run_optimization(
                 opt.observe(z, y)
             else:
                 opt.observe(y)
-            regrets[opt_name]["regrets"].append(regret)
+            data["regrets"].append(regret)
 
         if is_xarm:
             best_x = _rescale_to_search_space(opt.suggest_best(), search_space)
         else:
             best_x = opt.best_x
-        regrets[opt_name]["simple_regrets"] = fmax - func_noiseless(best_x) / dim
+        data["simple_regrets"] = fmax - func_noiseless(best_x) / dim
+
+        with open(ckpt, "w") as f:
+            json.dump(data, f)
+        regrets[opt_name] = data
 
     return regrets
 

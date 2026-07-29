@@ -18,6 +18,7 @@ Usage (from repo root):
 
 import asyncio
 import csv
+import json
 from enum import Enum
 from pathlib import Path
 from typing import TypedDict
@@ -31,12 +32,17 @@ from experiments.benchmarks.hpo_bench.client import (
     stop_hpo_server,
 )
 from experiments.benchmarks.hpo_wrapper import HPOBenchmark
+from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.utils.stats import calculate_statistics
 from imabo import IMABO
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
+# Per-(benchmark, budget, seed, algorithm) checkpoints, so reruns skip
+# finished work and adding an algorithm later never recomputes the others.
+CKPT_DIR = RESULT_DIR / "hpo_continuous"
+CKPT_DIR.mkdir(exist_ok=True)
 BETA = 0.5
 
 
@@ -45,6 +51,12 @@ class Algorithm(Enum):
     STOSOO = "StoSOO"
     HOO_T = "HOO-T"
     STROQUOOL = "Stroquool"
+    # Hier-MAB (AutoRAG-HP) needs each axis as an explicit finite set: both
+    # hyperparameters of these log-scaled 2D spaces are discretized to a
+    # geometric grid -- np.geomspace(lower, upper, m) -- with m = 10 or 100
+    # values per axis (HierMAB's axis_values does exactly this for log axes).
+    HIER_MAB_10 = "Hier-MAB-10"
+    HIER_MAB_100 = "Hier-MAB-100"
 
 
 class RegretData(TypedDict):
@@ -52,42 +64,75 @@ class RegretData(TypedDict):
     simple_regrets: float
 
 
+def build_optimizer(
+    algo: Algorithm,
+    benchmark_obj: HPOBenchmark,
+    n_iterations: int,
+    seed: int,
+    beta: float,
+) -> tuple:
+    """(optimizer, is_tree_based) for one algorithm.
+
+    Tree-based algorithms suggest points in [0,1]^d; IMABO and Hier-MAB
+    suggest config dicts.
+    """
+    dim = benchmark_obj.dim
+    if algo == Algorithm.IMABO:
+        return (
+            IMABO(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                multivariate=True,
+                beta=beta,
+            ),
+            False,
+        )
+    if algo == Algorithm.STOSOO:
+        return TimedOptimizer(stosoo, n_iterations, dim), True
+    if algo == Algorithm.HOO_T:
+        return TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0), True
+    if algo == Algorithm.STROQUOOL:
+        return TimedOptimizer(stroquool, n_iterations, dim), True
+    if algo == Algorithm.HIER_MAB_10:
+        return HierMAB(benchmark_obj.param_specs, n_points=10, seed=seed), False
+    if algo == Algorithm.HIER_MAB_100:
+        return HierMAB(benchmark_obj.param_specs, n_points=100, seed=seed), False
+    raise ValueError(f"unknown algorithm: {algo!r}")
+
+
 async def run_single_experiment(
     benchmark: str,
     n_iterations: int,
     seed: int = 42,
     beta: float = 0.5,
+    algorithms: list[Algorithm] | None = None,
 ) -> dict[str, RegretData]:
-    """Run one seed of the experiment with all four algorithms."""
-    benchmark_obj = HPOBenchmark(benchmark_name=benchmark, seed=seed)
-    dim = benchmark_obj.dim
+    """Run one seed of the experiment, checkpointed per algorithm.
 
-    imabo_opt = IMABO(
-        search_space=benchmark_obj.param_specs,
-        seed=seed,
-        multivariate=True,
-        beta=beta,
-    )
-    stosoo_opt = TimedOptimizer(stosoo, n_iterations, dim)
-    hoo_t_opt = TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0)
-    stroquool_opt = TimedOptimizer(stroquool, n_iterations, dim)
+    Each algorithm gets its own ``HPOBenchmark`` instance so its reward-sample
+    stream depends only on the seed (the wrapper draws the per-pull sample
+    with ``random.Random(seed)``), not on which algorithms ran before it in
+    the same process -- that keeps a checkpoint-resumed run identical to a
+    fresh one. Server-side objective values are joblib-cached on disk keyed
+    by config, so repeated pulls of a config never re-train a model.
+    """
+    algorithms = list(Algorithm) if algorithms is None else algorithms
 
-    # (enum, optimizer, is_tree_based)
-    # Tree-based algorithms suggest points in [0,1]^d; IMABO suggests dicts.
-    opts_config = [
-        (Algorithm.IMABO, imabo_opt, False),
-        (Algorithm.STOSOO, stosoo_opt, True),
-        (Algorithm.HOO_T, hoo_t_opt, True),
-        (Algorithm.STROQUOOL, stroquool_opt, True),
-    ]
-
-    regrets: dict[str, RegretData] = {
-        algo.value: {"regrets": [], "simple_regrets": float("inf")}
-        for algo in Algorithm
-    }
-
-    for algo, opt, is_tree in opts_config:
+    regrets: dict[str, RegretData] = {}
+    for algo in algorithms:
         opt_name = algo.value
+        ckpt = (
+            CKPT_DIR / f"{benchmark}_{n_iterations}iters_seed{seed}_{opt_name}.json"
+        )
+        if ckpt.exists():
+            with open(ckpt) as f:
+                regrets[opt_name] = json.load(f)
+            continue
+
+        benchmark_obj = HPOBenchmark(benchmark_name=benchmark, seed=seed)
+        opt, is_tree = build_optimizer(algo, benchmark_obj, n_iterations, seed, beta)
+
+        data: RegretData = {"regrets": [], "simple_regrets": float("inf")}
         for _ in tqdm(range(n_iterations), desc=f"{benchmark}/{opt_name}", leave=False):
             if is_tree and opt.done:
                 continue
@@ -99,9 +144,7 @@ async def run_single_experiment(
             result = await benchmark_obj.eval_config(eval_config)
             reward = result.get("sample_result", float("-inf"))
             # Regret = 1 - val_acc (minimisation of error)
-            regrets[opt_name]["regrets"].append(
-                1.0 - result.get("avg_result", float("-inf"))
-            )
+            data["regrets"].append(1.0 - result.get("avg_result", float("-inf")))
 
             if is_tree:
                 opt.observe(x, reward)
@@ -111,7 +154,16 @@ async def run_single_experiment(
         best = opt.suggest_best() if is_tree else opt.best_x
         if is_tree:
             best = benchmark_obj.array_to_config(best)
-        regrets[opt_name]["simple_regrets"] = 1.0 - benchmark_obj.get_config_value(best)
+        # Make sure the recommendation has been evaluated: Hier-MAB's incumbent
+        # is the per-axis argmax combination, which the run may never have
+        # served as a full config (get_config_value would return -inf for it).
+        # A cache hit for everyone else.
+        await benchmark_obj.eval_config(best)
+        data["simple_regrets"] = 1.0 - benchmark_obj.get_config_value(best)
+
+        with open(ckpt, "w") as f:
+            json.dump(data, f)
+        regrets[opt_name] = data
 
     return regrets
 
@@ -122,6 +174,7 @@ async def run_multiple_experiments(
     n_runs: int = 20,
     base_seed: int = 42,
     beta: float = 0.5,
+    algorithms: list[Algorithm] | None = None,
 ) -> list[dict[str, RegretData]]:
     """Run multiple independent runs of the experiment."""
     results = []
@@ -130,7 +183,11 @@ async def run_multiple_experiments(
     ):
         results.append(
             await run_single_experiment(
-                benchmark, n_iterations, seed=base_seed + i, beta=beta
+                benchmark,
+                n_iterations,
+                seed=base_seed + i,
+                beta=beta,
+                algorithms=algorithms,
             )
         )
     return results
@@ -252,7 +309,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    import nest_asyncio
-
-    nest_asyncio.apply()
+    # No nest_asyncio here: applying it patches the event loop in a way that
+    # makes every aiohttp request fail on Python >= 3.12 ("Timeout context
+    # manager should be used inside a task"), which wait_for_server's bare
+    # except then misreports as "server not up". Run as a plain script there
+    # are no nested event loops to enable.
     asyncio.run(main())

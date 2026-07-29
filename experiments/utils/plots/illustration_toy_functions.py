@@ -69,7 +69,7 @@ def plot_toy_functions_1d(save_fig=False):
         out_path = RESULTS_DIR / "illustration_toy_functions.pdf"
         save_figure(out_path, bbox_inches="tight", parents=True)
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

@@ -109,7 +109,7 @@ def plot_regret_vs_dimension_tpe_ablation(save_fig=False, beta=0.8):
             mkdir=False,
             verbose=False,
         )
-    plt.show()
+    plt.close()
 
 
 def plot_cumulative_regrets_k_experiment(save_fig=False, beta=0.5):
@@ -194,7 +194,7 @@ def plot_cumulative_regrets_k_experiment(save_fig=False, beta=0.5):
             mkdir=False,
             verbose=False,
         )
-    plt.show()
+    plt.close()
 
 
 def plot_simple_regret_k_experiment(save_fig=False, beta=0.5):
@@ -259,7 +259,7 @@ def plot_simple_regret_k_experiment(save_fig=False, beta=0.5):
             mkdir=False,
             verbose=False,
         )
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

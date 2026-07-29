@@ -195,7 +195,7 @@ def plot_hotpotqa_results(
         path = RESULTS_DIR / "paper_plots" / name
         save_figure(path, bbox_inches="tight", parents=True)
 
-    plt.show()
+    plt.close()
 
 
 def _shorten_model(name: str) -> str:
@@ -363,7 +363,7 @@ def plot_config_analysis(
         )
         save_figure(path, bbox_inches="tight", parents=True)
 
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

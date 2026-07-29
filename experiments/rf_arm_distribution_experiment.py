@@ -85,6 +85,9 @@ _silence_known_warnings()
 
 class Algorithm(Enum):
     IMOSS_TPE = "IMOSS-TPE"
+    # TPE with a univariate Parzen estimator (multivariate=False): one
+    # independent density per hyperparameter, i.e. a factored proposal.
+    IMOSS_TPE_UNI = "IMOSS-TPE-univ"
     IMOSS = "IMOSS-Random"
     RANDOM = "Random Search"
     IMOSS_TABFM = "IMOSS-TabFM"
@@ -139,6 +142,13 @@ def build_optimizer(
             search_space=search_space,
             seed=seed,
             multivariate=True,
+            beta=BETA,
+        )
+    elif algorithm == Algorithm.IMOSS_TPE_UNI:
+        return IMABO(
+            search_space=search_space,
+            seed=seed,
+            multivariate=False,
             beta=BETA,
         )
     elif algorithm == Algorithm.IMOSS:
@@ -659,7 +669,11 @@ def make_plots(
         _PRETTY_LABELS[
             algo_slug(Algorithm.IMOSS_TABPFN, fit_granularity, acquisition, quantile)
         ] = fm_label
-    regret_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label, "UCB-AIR"]
+    # Hier-MAB's per-run JSONs are produced by factored_baseline_experiment.py
+    # (same directory, filename scheme, and seed pairing); it has no proposal
+    # oracle, so like UCB-AIR it appears only in the regret row. IMOSS-TPE-univ
+    # (multivariate=False) has stored runs but is not part of the paper figure.
+    regret_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label, "UCB-AIR", "Hier-MAB"]
     oracle_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label]
 
     print("Generating RF reward-landscape structure grid (benchmark-only)...")
@@ -687,6 +701,9 @@ def make_plots(
         n_iterations=n_iterations,
         save_fig=save_fig,
         log_scale=True,
+        # Only this figure's foundation-model series: the loader also picks
+        # up the acquisition-sweep variant runs, which must not be drawn.
+        algorithms=[fm_label],
     )
 
 
