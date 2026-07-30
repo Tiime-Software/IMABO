@@ -80,10 +80,6 @@ def plot_regret_vs_dimension_tpe_ablation(save_fig=False, beta=0.8):
             )
 
         ax.set_xticks(sorted(df["dimension"].unique()))
-        if idx == 1:  # Middle subplot
-            ax.set_xlabel(
-                "Dimension", fontweight="bold", fontsize=adaptive_label_fontsize(ax)
-            )
         if idx == 0:  # Left subplot
             ax.set_ylabel(
                 "Average Regret",
@@ -95,6 +91,10 @@ def plot_regret_vs_dimension_tpe_ablation(save_fig=False, beta=0.8):
         ax.tick_params(axis="both", which="major", labelsize=20)
         ax.set_axisbelow(True)
         ax.grid(True, alpha=0.3)
+
+    fig.supxlabel(
+        "Dimension", fontweight="bold", fontsize=adaptive_label_fontsize(axes[0])
+    )
 
     handles, labels = axes[0].get_legend_handles_labels()
     create_figure_legend(fig, handles, labels, ncol=2, bbox_y=1.10)
@@ -154,7 +154,7 @@ def plot_cumulative_regrets_k_experiment(save_fig=False, beta=0.5, columns=1):
     CONVENTION (colors, spines, shared top legend) at larger, appendix-
     readable font/line sizes rather than the tiny main-paper print pt.
     """
-    functions = ["sin1", "garland", "rastrigin"]
+    functions = ["sin1", "garland", "rastrigin", "gaussian"]
 
     dfs = {
         func: pd.read_csv(
@@ -197,13 +197,12 @@ def plot_cumulative_regrets_k_experiment(save_fig=False, beta=0.5, columns=1):
             )
             seen.setdefault(label, line)
 
-        if idx == n // 2:  # middle panel
-            ax.set_xlabel("Iteration", fontweight="bold", fontsize=style.label_fontsize)
         ax.set_title(
             func.capitalize(), fontweight="bold", fontsize=style.title_fontsize, pad=4
         )
         style.style_axis(ax)
 
+    fig.supxlabel("Iteration", fontweight="bold", fontsize=style.label_fontsize)
     axes[0].set_ylabel(
         "Cumulative Regret", fontweight="bold", fontsize=style.label_fontsize
     )

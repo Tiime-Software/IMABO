@@ -70,8 +70,7 @@ def _build_optimizer(
     the native domain."""
     if algo == Algorithm.IMABO:
         return (
-            IMABO(search_space=search_space, seed=seed, multivariate=False,
-                  beta=beta),
+            IMABO(search_space=search_space, seed=seed, multivariate=True, beta=beta),
             False,
         )
     if algo == Algorithm.STOSOO:
@@ -111,11 +110,10 @@ def run_optimization(
             continue
 
         obj_func = ObjectiveFunctions(dim=dim, noise_seed=seed)
-        func = obj_func.get_function_by_name(function_name)
-        func_noiseless = obj_func.get_function_by_name(function_name, noise=False)
+        func_noiseless = obj_func.get_function_by_name(function_name)
         fmax = obj_func.get_theoretical_max(function_name)
         search_space = obj_func.get_search_space(function_name)
-        if func is None:
+        if func_noiseless is None:
             raise ValueError(f"Unknown function: {function_name}")
 
         opt, is_xarm = _build_optimizer(
@@ -129,7 +127,14 @@ def run_optimization(
             z = opt.suggest()
             x = _rescale_to_search_space(z, search_space) if is_xarm else z
             noiseless = func_noiseless(x) / dim
-            y = noiseless + obj_func.noise_rng.normal(0, obj_func.noise_std)
+            if function_name == "gaussian":
+                # Match coordination_barrier_experiment.py's observation model
+                # for this landscape exactly: a single Bernoulli draw with
+                # success probability mu(x) (noiseless is already mu(x), the
+                # dim scaling cancels), not additive Gaussian noise.
+                y = float(obj_func.noise_rng.random() < noiseless)
+            else:
+                y = noiseless + obj_func.noise_rng.normal(0, obj_func.noise_std)
             regret = fmax - noiseless
             if is_xarm:
                 opt.observe(z, y)
@@ -172,7 +177,8 @@ def run_multiple_experiments(
 
 
 if __name__ == "__main__":
-    function_name = ["sin1", "garland", "rastrigin"]
+    function_name = ["sin1", "garland", "rastrigin", "gaussian"]
+    # function_name = ["gaussian"]
     dim = 4
     n_runs = 20
     base_seed = 42

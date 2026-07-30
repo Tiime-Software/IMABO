@@ -66,10 +66,12 @@ def save_results_to_csv(
 
     summary_rows = []
     for key, stats in results_dict.items():
+        # Split from the right: dim/n_iter are always the last two parts, but
+        # func_name itself may contain underscores.
         parts = key.split("_")
-        func_name = parts[0]
-        dim = int(parts[1].replace("D", ""))
-        n_iter = int(parts[2])
+        func_name = "_".join(parts[:-2])
+        dim = int(parts[-2].replace("D", ""))
+        n_iter = int(parts[-1])
 
         for algorithm, data in stats.items():
             summary_rows.append(
@@ -111,10 +113,12 @@ def save_iterations_to_csv(
 
     rows = []
     for key, stats in results_dict.items():
+        # Split from the right: dim/n_iter are always the last two parts, but
+        # func_name itself may contain underscores.
         parts = key.split("_")
-        func_name = parts[0]
-        dim = int(parts[1].replace("D", ""))
-        n_iter = int(parts[2])
+        func_name = "_".join(parts[:-2])
+        dim = int(parts[-2].replace("D", ""))
+        n_iter = int(parts[-1])
 
         for algorithm, data in stats.items():
             regrets_mean = data["regrets"]["mean"]

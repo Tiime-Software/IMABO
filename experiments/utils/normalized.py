@@ -10,7 +10,7 @@ def reward_bounds(function_name, dim, n_sample=200_000, pad=0.02):
     normalised reward and regret both lie in [0,1].
     """
     obj = ObjectiveFunctions(dim=dim, noise_seed=0)
-    fn0 = obj.get_function_by_name(function_name, noise=False)
+    fn0 = obj.get_function_by_name(function_name)
     fmax = obj.get_theoretical_max(function_name)
     ss = obj.get_search_space(function_name)
     keys = sorted(ss)

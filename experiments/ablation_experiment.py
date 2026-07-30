@@ -40,7 +40,7 @@ TPE_N_RUNS = 10
 # ── Sub-experiment 2: MOSS / k impact ─────────────────────────────────────────
 K_VALUES = [1, 10, 50, 70, 100, 200]
 K_DIM = 4
-K_FUNCTIONS = ["sin1", "garland", "rastrigin"]
+K_FUNCTIONS = ["sin1", "garland", "rastrigin", "gaussian"]
 K_N_ITER = 5000
 K_N_RUNS = 10
 BETA = 0.5
@@ -57,9 +57,10 @@ def run_single(
     k: int = 1,
     beta: float = BETA,
 ) -> dict:
-    obj = ObjectiveFunctions(dim=dim, noise_seed=seed, noise_std=0.5)
-    func = obj.get_function_by_name(function_name)  # built-in noise
-    func_noiseless = obj.get_function_by_name(function_name, noise=False)  # noiseless
+    obj = ObjectiveFunctions(
+        dim=dim, noise_seed=seed, noise_std=0.7
+    )  # noise std does not matter for gaussian
+    func_noiseless = obj.get_function_by_name(function_name)
     fmax = obj.get_theoretical_max(function_name)
     search_space = obj.get_search_space(function_name)
 
@@ -69,7 +70,6 @@ def run_single(
         opt = IMABO(
             search_space=search_space,
             seed=seed,
-            multivariate=False,
             use_tpe=False,
             beta=beta,
         )
@@ -80,7 +80,6 @@ def run_single(
         opt = IMABO(
             search_space=search_space,
             seed=seed,
-            multivariate=False,
             beta=beta,
         )
         suggest_fn = opt.suggest
@@ -98,7 +97,14 @@ def run_single(
     ):
         x = suggest_fn()
         noiseless = func_noiseless(x) / dim
-        y = noiseless + obj.noise_rng.normal(0, obj.noise_std)
+        if function_name == "gaussian":
+            # Match coordination_barrier_experiment.py's observation model for
+            # this landscape exactly: a single Bernoulli draw with success
+            # probability mu(x) (noiseless is already mu(x), the dim scaling
+            # cancels), not additive Gaussian noise.
+            y = float(obj.noise_rng.random() < noiseless)
+        else:
+            y = noiseless + obj.noise_rng.normal(0, obj.noise_std)
         regrets.append(fmax - noiseless)
         observe_fn(y)
 
@@ -271,8 +277,5 @@ def _save_k_results(results: dict, function_name: str, beta: float = BETA) -> No
 
 
 if __name__ == "__main__":
-    # print("=== Sub-experiment 1: TPE oracle impact ===")
-    # run_tpe_ablation()
-
     print("\n=== Sub-experiment 2: MOSS oracle / k impact ===")
     run_k_ablation()

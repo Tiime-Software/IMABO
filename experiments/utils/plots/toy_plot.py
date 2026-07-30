@@ -192,13 +192,9 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", colum
                 zorder=5,
             )
 
-        # Only show xlabel on the middle subplot and ylabel on the left
-        # subplot, matching ablation_plot.py's convention (one shared label
-        # per axis instead of repeating it under/beside every panel).
-        if ax_idx == n_benchmarks // 2:
-            ax.set_xlabel(
-                "Simple Regret", fontweight="bold", fontsize=style.label_fontsize
-            )
+        # One shared ylabel on the left subplot instead of repeating it beside
+        # every panel; the shared xlabel is centered on the whole figure below
+        # (fig.supxlabel), not pinned under any one subplot.
         if ax_idx == 0:
             ax.set_ylabel(
                 "Online Avg. Regret",
@@ -230,6 +226,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", colum
     legend_labels = [display_name(algorithm) for algorithm in algorithms]
     style.legend(fig, legend_handles, legend_labels, n_labels=len(algorithms))
 
+    fig.supxlabel("Simple Regret", fontweight="bold", fontsize=style.label_fontsize)
     plt.tight_layout(rect=[0, 0, 1, _appendix_legend_rect_top(n_rows)])
 
     if save_fig:
@@ -245,7 +242,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", colum
 
 
 if __name__ == "__main__":
-    benchmarks = ["sin1", "garland", "rastrigin"]
+    benchmarks = ["sin1", "garland", "rastrigin", "gaussian"]
     exp_type = "toy"
     print(f"Generating multiple trajectories comparison for {benchmarks}...")
     plot_multiple_trajectories(benchmarks=benchmarks, save_fig=True, exp_type=exp_type)

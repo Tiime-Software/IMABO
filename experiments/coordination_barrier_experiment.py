@@ -192,12 +192,12 @@ LANDSCAPES: dict[str, Landscape] = {
     },
     # The multilinear mu* is exact: the function is multilinear, so its
     # maximum sits at a vertex -- 1/2 + c at the all-ones corner.
-    **{
-        f"prod_d{d}": Landscape(
-            f"prod_d{d}", d, make_mu_prod(d), 0.5 + PROD_C, HIER_GRIDS
-        )
-        for d in FAMILY_DIMS
-    },
+    # **{
+    #     f"prod_d{d}": Landscape(
+    #         f"prod_d{d}", d, make_mu_prod(d), 0.5 + PROD_C, HIER_GRIDS
+    #     )
+    #     for d in FAMILY_DIMS
+    # },
 }
 
 IMOSS_METHODS = {
@@ -233,28 +233,40 @@ def _build(land: Landscape, slug: str, n_iterations: int, seed: int, tabpfn_mode
         return HierMAB(land.search_space, n_points=m, seed=seed), False
     if slug == "imoss_random":
         return (
-            IMABO(search_space=land.search_space, seed=seed, multivariate=True,
-                  use_tpe=False, beta=BETA),
+            IMABO(
+                search_space=land.search_space,
+                seed=seed,
+                multivariate=True,
+                use_tpe=False,
+                beta=BETA,
+            ),
             False,
         )
     if slug == "imoss_tpe":
         return (
-            IMABO(search_space=land.search_space, seed=seed, multivariate=True,
-                  beta=BETA),
+            IMABO(
+                search_space=land.search_space, seed=seed, multivariate=True, beta=BETA
+            ),
             False,
         )
     if slug == "imoss_tpe_uni":
         return (
-            IMABO(search_space=land.search_space, seed=seed, multivariate=False,
-                  beta=BETA),
+            IMABO(
+                search_space=land.search_space, seed=seed, multivariate=False, beta=BETA
+            ),
             False,
         )
     if slug == "imoss_tabpfn":
         from imabo.tabpfn_optimizer import IMABOTabPFN
 
         return (
-            IMABOTabPFN(search_space=land.search_space, seed=seed,
-                        tabpfn_model=tabpfn_model, beta=BETA, n_estimators=4),
+            IMABOTabPFN(
+                search_space=land.search_space,
+                seed=seed,
+                tabpfn_model=tabpfn_model,
+                beta=BETA,
+                n_estimators=4,
+            ),
             False,
         )
     if slug == "stosoo":
@@ -422,12 +434,10 @@ def plot_landscapes(path: Path) -> None:
     style = paper_style(conference="aaai", columns=2)
     panels = [
         ("family_d2", "Gaussian", (MODE_LO, MODE_HI)),
-        ("prod_d2", "multilinear", (MODE_LO, MODE_HI)),
+        # ("prod_d2", "multilinear", (MODE_LO, MODE_HI)),
     ]
 
-    fig, axes = plt.subplots(
-        1, len(panels), figsize=(0.52 * style.width_in, 1.75)
-    )
+    fig, axes = plt.subplots(1, len(panels), figsize=(0.52 * style.width_in, 1.75))
     g = np.linspace(0.0, 1.0, 301)
     for ax, (tag, title, (lo, hi)) in zip(axes, panels):
         land = LANDSCAPES[tag]
@@ -435,10 +445,28 @@ def plot_landscapes(path: Path) -> None:
         im = ax.imshow(
             z, origin="lower", extent=(0, 1, 0, 1), cmap="viridis", aspect="equal"
         )
-        ax.scatter([lo], [lo], marker="o", s=28, facecolor="white",
-                   edgecolor="black", linewidth=0.6, clip_on=False, zorder=5)
-        ax.scatter([hi], [hi], marker="*", s=70, facecolor="white",
-                   edgecolor="black", linewidth=0.6, clip_on=False, zorder=5)
+        ax.scatter(
+            [lo],
+            [lo],
+            marker="o",
+            s=28,
+            facecolor="white",
+            edgecolor="black",
+            linewidth=0.6,
+            clip_on=False,
+            zorder=5,
+        )
+        ax.scatter(
+            [hi],
+            [hi],
+            marker="*",
+            s=70,
+            facecolor="white",
+            edgecolor="black",
+            linewidth=0.6,
+            clip_on=False,
+            zorder=5,
+        )
         ax.set_title(title, fontweight="bold", fontsize=style.title_fontsize, pad=4)
         ax.set_xticks([0, 0.5, 1])
         ax.set_yticks([0, 0.5, 1])
@@ -455,7 +483,9 @@ def plot_results_2x2(n_iterations: int, n_seeds: int, path: Path) -> None:
     """The section's single results figure: rows = landscapes (Gaussian,
     warped multilinear), columns = comparison group (IMOSS family,
     tree-based continuous bandits), both Hier-MAB grid resolutions in every
-    panel, cumulative regret on a log y-axis."""
+    panel, cumulative regret on a log y-axis. Uncomment/comment rows in
+    ``land_rows`` to switch between the 2x2 (both landscapes) and 1x2 (one
+    landscape) layouts -- the grid, figure height, and legend all adapt."""
     import matplotlib.pyplot as plt
 
     from experiments.utils.plots.plot_configs import create_figure_legend, paper_style
@@ -463,18 +493,26 @@ def plot_results_2x2(n_iterations: int, n_seeds: int, path: Path) -> None:
     style = paper_style(conference="aaai", columns=2, markevery_divisor=10)
     land_rows = [
         (LANDSCAPES["family_d2"], "Gaussian"),
-        (LANDSCAPES["prod_d2"], "multilinear"),
     ]
     col_groups = [
         (IMOSS_METHODS, "vs. IMOSS"),
         (TREE_METHODS, "vs. continuous bandits"),
     ]
+    n_rows = len(land_rows)
 
-    subplot_row_in = 1.35
+    # A single row would otherwise get the same per-row height as one row of
+    # the 2x2 layout, which reads as too flat/squished at the full column
+    # width -- give it more height per row instead.
+    subplot_row_in = 1.35 if n_rows > 1 else 2.1
     legend_band_in = 0.55
-    height_in = 2 * subplot_row_in + legend_band_in
+    height_in = n_rows * subplot_row_in + legend_band_in
     fig, axes = plt.subplots(
-        2, 2, figsize=(style.width_in, height_in), sharex=True, sharey="row"
+        n_rows,
+        2,
+        figsize=(style.width_in, height_in),
+        sharex=True,
+        sharey="row",
+        squeeze=False,
     )
 
     seen: dict = {}
@@ -482,9 +520,7 @@ def plot_results_2x2(n_iterations: int, n_seeds: int, path: Path) -> None:
         hier = hier_methods(land)
         for c, (group, col_title) in enumerate(col_groups):
             ax = axes[r][c]
-            _draw_panel(
-                ax, land, {**group, **hier}, n_iterations, n_seeds, style, seen
-            )
+            _draw_panel(ax, land, {**group, **hier}, n_iterations, n_seeds, style, seen)
             ax.set_yscale("log")
             if r == 0:
                 ax.set_title(
@@ -493,7 +529,7 @@ def plot_results_2x2(n_iterations: int, n_seeds: int, path: Path) -> None:
                     fontsize=style.title_fontsize,
                     pad=4,
                 )
-            if r == 1:
+            if r == n_rows - 1:
                 ax.set_xlabel(
                     "Iteration", fontweight="bold", fontsize=style.label_fontsize
                 )
@@ -514,7 +550,7 @@ def plot_results_2x2(n_iterations: int, n_seeds: int, path: Path) -> None:
         fontsize=style.legend_fontsize,
     )
     fig.tight_layout(
-        rect=[0, 0, 1, (2 * subplot_row_in) / height_in], w_pad=1.0, h_pad=0.8
+        rect=[0, 0, 1, (n_rows * subplot_row_in) / height_in], w_pad=1.0, h_pad=0.8
     )
     fig.savefig(path, bbox_inches="tight")
     print(f"figure saved to {path}")
@@ -540,7 +576,7 @@ def main() -> None:
     run_all(n_iterations, n_seeds, n_jobs=args.n_jobs, skip_tabpfn=args.quick)
     summarize(n_iterations, n_seeds)
     if args.plot:
-        plot_landscapes(RESULT_DIR / "coordination_landscapes.pdf")
+        # plot_landscapes(RESULT_DIR / "coordination_landscapes.pdf")
         plot_results_2x2(
             n_iterations,
             n_seeds,
