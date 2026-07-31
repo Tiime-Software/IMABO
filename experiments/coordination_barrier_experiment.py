@@ -192,13 +192,19 @@ LANDSCAPES: dict[str, Landscape] = {
     },
     # The multilinear mu* is exact: the function is multilinear, so its
     # maximum sits at a vertex -- 1/2 + c at the all-ones corner.
-    # **{
-    #     f"prod_d{d}": Landscape(
-    #         f"prod_d{d}", d, make_mu_prod(d), 0.5 + PROD_C, HIER_GRIDS
-    #     )
-    #     for d in FAMILY_DIMS
-    # },
+    **{
+        f"prod_d{d}": Landscape(
+            f"prod_d{d}", d, make_mu_prod(d), 0.5 + PROD_C, HIER_GRIDS
+        )
+        for d in FAMILY_DIMS
+    },
 }
+
+
+def active_landscapes() -> list[Landscape]:
+    """Landscapes to run/plot (excludes the warped multilinear ``prod_*`` family)."""
+    return [land for land in LANDSCAPES.values() if not land.tag.startswith("prod_")]
+
 
 IMOSS_METHODS = {
     "imoss_random": "IMOSS-Random",
@@ -328,7 +334,7 @@ def run_all(
     if not skip_tabpfn:
         pending_tabpfn = any(
             not _ckpt(land, "imoss_tabpfn", n_iterations, i).exists()
-            for land in LANDSCAPES.values()
+            for land in active_landscapes()
             for i in range(n_seeds)
         )
         if pending_tabpfn:
@@ -337,7 +343,7 @@ def run_all(
             tabpfn_model = load_tabpfn()
             print("TabPFN ready (checkpoint cached; shared across seeds).")
 
-    for land in LANDSCAPES.values():
+    for land in active_landscapes():
         for slug, name in methods_for(land, skip_tabpfn).items():
             pending = [
                 i
@@ -365,7 +371,7 @@ def load_runs(
 
 
 def summarize(n_iterations: int, n_seeds: int) -> None:
-    for land in LANDSCAPES.values():
+    for land in active_landscapes():
         print(f"\n{land.tag} (mu* = {land.mu_star:.4f})")
         print(f"{'method':>14}{'cumulative regret':>24}{'avg regret':>12}{'evals':>8}")
         print("-" * 58)
@@ -571,7 +577,7 @@ def main() -> None:
     if args.quick:
         n_iterations, n_seeds = 200, 2
 
-    for land in LANDSCAPES.values():
+    for land in active_landscapes():
         print(f"{land.tag}: mu* = {land.mu_star:.6f}")
     run_all(n_iterations, n_seeds, n_jobs=args.n_jobs, skip_tabpfn=args.quick)
     summarize(n_iterations, n_seeds)
