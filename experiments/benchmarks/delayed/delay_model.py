@@ -35,10 +35,9 @@ class DelayModel:
         if this pull is Bernoulli-censored (never receives feedback).
 
         ``expected_steps`` (a config-dependent delay hint) and any other
-        simulator kwargs (``reward``, ``patience_steps`` -- used only by
-        CriteoDelayModel) are accepted for a uniform interface and ignored:
-        this model's delay is a fitted log-normal, independent of the config or
-        the reward value. Censoring here is value-agnostic (a coin flip on
+        simulator kwargs (``reward``, ``patience_steps``) are accepted for a
+        uniform interface and ignored: this model's delay is a fitted
+        log-normal, independent of the config or the reward value. Censoring here is value-agnostic (a coin flip on
         arrival), which is correct: it does not depend on whether the reward is
         0 or 1. :class:`RuntimeDelayModel` is the model that uses expected_steps.
         """

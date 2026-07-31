@@ -74,9 +74,9 @@ def _appendix_legend_rect_top(n_legend_rows: int) -> float:
 
 
 # Data dirs and default benchmark tags follow the active benchmark family in
-# delayed_feedback_experiment.py, so the same plot module serves the LCBench
-# (mixed-space, runtime delay), RF (finite, injected delay), and Criteo (large
-# finite, real ad-conversion delay) runs without editing paths here.
+# delayed_feedback_experiment.py, so the same plot module serves both the
+# LCBench (mixed-space, runtime delay) and RF (finite, injected delay) runs
+# without editing paths here.
 if BENCHMARK == "lcbench":
     DATA_DIR = RESULTS_DIR / "delayed_feedback_lcbench"
     SEVERITY_DATA_DIR = RESULTS_DIR / "delayed_feedback_lcbench_severity"

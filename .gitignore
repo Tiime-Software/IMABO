@@ -14,7 +14,8 @@ results/
 data/
 experiments/test_exp/
 
-# Derived from the terms-of-use-gated Criteo Sponsored Search Conversion Log;
-# regenerate locally with experiments.benchmarks.delayed.build_criteo_asset.
+# Derived from the terms-of-use-gated Criteo Sponsored Search Conversion Log.
+# The Criteo benchmark is no longer part of this repo; this rule stays so any
+# leftover local assets are never committed (redistributing them isn't ours to do).
 experiments/benchmarks/delayed/assets/criteo_*
 

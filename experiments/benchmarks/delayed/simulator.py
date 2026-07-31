@@ -50,8 +50,8 @@ def patience_for_quantile(
 
     A fixed `patience_steps` (e.g. 72) means completely different things across
     benchmarks whose delay time-scales differ: at 72 it cuts ~0.5% of observed
-    feedback on LCBench, ~5.6% on the RF log-normal, and ~28% on Criteo's
-    heavy-tailed real delays. Setting patience to a shared *quantile* instead
+    feedback on LCBench but ~5.6% on the RF log-normal, and the gap only widens
+    for heavier-tailed delays. Setting patience to a shared *quantile* instead
     makes the patience-induced censoring identical (= 1 - q) across benchmarks,
     so cross-benchmark comparisons isolate the Bernoulli (never-arrives)
     censoring rather than confounding it with an arbitrary shared cutoff.
@@ -61,7 +61,6 @@ def patience_for_quantile(
     consistent with whatever model/benchmark pairing is in use:
       - RF (log-normal DelayModel): expected_steps is None; the quantile is of
         the fitted log-normal.
-      - Criteo (empirical CriteoDelayModel): quantile of the real delay array.
       - LCBench (RuntimeDelayModel): delay = config runtime x jitter, so configs
         are sampled from the benchmark and their per-config delays are pooled.
     Only positive (non-None) delays define patience -- a `None` is a
@@ -88,11 +87,10 @@ def patience_for_quantile(
                 _uniform_config(bench.get_search_space(), rng) for _ in range(n_samples)
             ]
 
-    # reward=1 requests the positive-signal delay (matters only for the
-    # conversion-signal CriteoDelayModel, whose patience-relevant distribution
-    # is the conversion delays; value-agnostic models ignore it). We want the
-    # distribution of delays for pulls that DO produce a delayed signal, which
-    # is what patience trims.
+    # reward=1 requests the positive-signal delay; the current value-agnostic
+    # models ignore it, but it keeps the call correct for any signal-dependent
+    # delay model. We want the distribution of delays for pulls that DO produce
+    # a delayed signal, which is what patience trims.
     delays = []
     for i in range(n_samples):
         es = bench.expected_runtime_steps(configs[i]) if has_runtime else None

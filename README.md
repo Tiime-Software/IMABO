@@ -162,8 +162,6 @@ This builds a container with a Python 3.7 conda env and the vendored `HPOBench/`
 - `optuna_bandit.py` — `OptunaBandit`, a k-averaging wrapper around Optuna's TPE sampler.
 - `random_search.py` — uniform random search.
 - `ucb_air.py` — UCB-AIR (Wang, Audibert & Munos), infinitely-many-armed bandit with the Arm-Increasing Rule.
-- `qrm2.py` — QRM2, parameter-free quantile-regret minimization (Roy Chaudhuri & Kalyanakrishnan, UAI 2018).
-- `dttts.py` — D-TTTS, Dynamic Top-Two Thompson Sampling (Shang, Kaufmann & Valko, AutoML@ICML 2019).
 - `hier_mab.py` — Hier-MAB, the two-level hierarchical bandit from AutoRAG-HP (Fu et al., EMNLP Findings 2024).
 
 ## Repository Layout
@@ -186,7 +184,7 @@ experiments/
   factored_baseline_experiment.py    # Hier-MAB on the discrete RF grid
   coordination_barrier_experiment.py # synthetic factored-method counterexamples
   reward_structure_analysis.py       # offline reward-landscape diagnostics
-  baselines/                        # StoSOO/HOO-T/Stroquool, OptunaBandit, Random, UCB-AIR, QRM2, D-TTTS, Hier-MAB
+  baselines/                        # StoSOO/HOO-T/Stroquool, OptunaBandit, Random, UCB-AIR, Hier-MAB
   benchmarks/
     config.py                       # BENCHMARKS dict (param specs, fidelity, metrics)
     hpo_wrapper.py                  # HPOBenchmark client (array_to_config, eval_config, …)
@@ -196,7 +194,6 @@ experiments/
     hotpotqa/                       # HotpotQA benchmark, embeddings, metrics
   utils/
     stats.py                        # calculate_statistics, CSV save helpers
-    normalized.py                   # normalized-regret helpers
     plots/                          # one plotting module per experiment, shared plot_configs.py (Wong palette, paper style)
 results/                             # generated CSVs and PDFs (git-ignored)
 HPOBench/                            # vendored HPOBench source (installed in the Docker image)
