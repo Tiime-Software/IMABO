@@ -3,7 +3,10 @@ import pytest
 
 from imabo import (
     IMABO,
+    ArmStats,
     FiniteIMABO,
+    IMABOCoordUCB,
+    IMABOTabPFN,
     InMemoryStorage,
     config_to_key,
     key_to_config,
@@ -12,6 +15,7 @@ from imabo import (
     ucb,
     ucb_siri,
 )
+from imabo.moss import KLUCB1
 
 
 SIMPLE_SEARCH_SPACE = {
@@ -206,6 +210,135 @@ class TestBanditIndices:
         up = ucb_siri(0.5, 4, 100, bonus_type="ucb")
         down = ucb_siri(0.5, 4, 100, bonus_type="lcb")
         assert up >= 0.5 >= down
+
+
+class TestWinningOracles:
+    """The two tuned explore oracles (see winning_configs.pdf)."""
+
+    SPACE = {f"x{i}": {"choices": list(range(6))} for i in range(4)}
+
+    def _run(self, opt, n=600, seed=3):
+        rng = np.random.default_rng(seed)
+        for _ in range(n):
+            config = opt.suggest()
+            opt.observe(float(rng.random() < 0.1 + 0.06 * sum(config.values())))
+        return opt
+
+    def test_klucb1_forces_each_choice_once_then_ranks(self):
+        # select() does not reserve: an uncredited choice keeps being returned
+        # until its vote actually arrives, which is what the oracle relies on
+        # (the credit for a proposal lands several rounds after the selection).
+        b = KLUCB1(3)
+        assert [b.select() for _ in range(3)] == [0, 0, 0]
+        for i, r in ((0, 1.0), (1, 0.0), (2, 1.0)):
+            assert b.select() == i
+            b.update(i, r)
+        idx = b.indices()
+        assert np.isfinite(idx).all()
+        assert idx[1] < idx[0]  # the losing choice ranks last
+
+    def test_klucb1_revise_keeps_the_vote_count(self):
+        b = KLUCB1(2)
+        b.update(0, 0.3)
+        b.revise(0, 0.5)  # same vote, sharpened value
+        assert b.n[0] == 1.0
+        assert b.means[0] == pytest.approx(0.8)
+
+    def test_coord_ucb_mutates_one_coordinate_from_the_incumbent(self):
+        opt = self._run(IMABOCoordUCB(search_space=self.SPACE, seed=1, beta=0.5))
+        state = opt.memory.get_current_state()
+        assert len(state.arms) > 5
+        # Every registered decision is a single-coordinate move off its parent.
+        for decisions in opt._pending_choice.values():
+            for d in decisions:
+                child = key_to_config(d.arm_key, opt.param_names)
+                parent = key_to_config(d.parent_key, opt.param_names)
+                differing = [p for p in opt.param_names if child[p] != parent[p]]
+                assert differing == [opt.param_names[d.coord]]
+
+    def test_coord_ucb_credits_the_arm_mean_not_the_first_pull(self):
+        opt = self._run(IMABOCoordUCB(search_space=self.SPACE, seed=2, beta=0.5))
+        opt._refresh_credits()
+        for decisions in opt._pending_choice.values():
+            for d in decisions:
+                if d.credited is None:
+                    continue
+                assert d.credited == pytest.approx(opt._arm_mean(d.arm_key))
+        # One vote per decision, however many rewards the arm collected.
+        assert opt.coord_bandit.n.sum() == pytest.approx(
+            sum(
+                1
+                for ds in opt._pending_choice.values()
+                for d in ds
+                if d.credited is not None
+            )
+        )
+
+    def test_coord_ucb_is_reproducible(self):
+        a = self._run(IMABOCoordUCB(search_space=self.SPACE, seed=7, beta=0.5))
+        b = self._run(IMABOCoordUCB(search_space=self.SPACE, seed=7, beta=0.5))
+        assert a.best_config == b.best_config
+        assert np.allclose(a.coord_bandit.sum, b.coord_bandit.sum)
+
+    def test_tabpfn_mutation_pool_composition(self):
+        opt = IMABOTabPFN(
+            search_space=self.SPACE,
+            seed=0,
+            candidate_source="mutation",
+            candidate_uniform_frac=0.1,
+            tabpfn_model={},
+        )
+        stats = ArmStats(mean_reward=0.8, nb_rewarded=5, nb_pending=0)
+        parent = {f"x{i}": 3 for i in range(4)}
+        rewarded = [(config_to_key(parent, opt.param_names), stats)]
+        pool = opt._sample_candidates(rewarded)
+        assert len(pool) == opt.n_candidates
+        # 10% uniform, the rest one coordinate off the incumbent.
+        mutants = pool[10:]
+        assert len(mutants) == 90
+        for m in mutants:
+            assert sum(m[p] != parent[p] for p in opt.param_names) == 1
+
+    def test_tabpfn_uniform_pool_is_the_default(self):
+        opt = IMABOTabPFN(search_space=self.SPACE, seed=0, tabpfn_model={})
+        assert opt.candidate_source == "uniform"
+        assert len(opt._sample_candidates([])) == opt.n_candidates
+
+    def test_mutation_scale_is_a_no_op_on_categorical_axes(self):
+        import random
+
+        from imabo.mutation import local_value_sampler, mutate_value
+
+        opt = IMABOTabPFN(search_space=self.SPACE, seed=0, tabpfn_model={})
+        scaled = [
+            local_value_sampler(opt.distributions, random.Random(11), 0.1)("x0", 3)
+            for _ in range(50)
+        ]
+        plain = [
+            mutate_value("x0", 3, opt.distributions, random.Random(11))
+            for _ in range(50)
+        ]
+        assert scaled == plain
+
+    def test_local_step_stays_in_range_and_is_local(self):
+        import math
+        import random
+
+        from imabo.mutation import local_value_sampler
+
+        space = {"lr": {"lower": 1e-5, "upper": 1.0, "log": True}}
+        opt = IMABOCoordUCB(search_space=space, seed=0, beta=0.5)
+        f = local_value_sampler(opt.distributions, random.Random(0), 0.1)
+        d = opt.distributions["lr"]
+        width = math.log(d.high) - math.log(d.low)
+        near = 0
+        for current in (d.low, d.high, 1e-3):
+            for _ in range(2000):
+                v = f("lr", current)
+                assert d.low <= v <= d.high  # boundary clamp, original space
+                near += abs(math.log(v) - math.log(current)) / width < 0.1
+        # A uniform redraw would land within 10% only ~19% of the time.
+        assert near / 6000 > 0.5
 
 
 class TestFiniteIMABO:

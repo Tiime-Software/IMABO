@@ -35,7 +35,8 @@ from experiments.benchmarks.hpo_wrapper import HPOBenchmark
 from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.utils.stats import calculate_statistics
-from imabo import IMABO
+from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
+from imabo.tabpfn_optimizer import load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -57,11 +58,24 @@ class Algorithm(Enum):
     # values per axis (HierMAB's axis_values does exactly this for log axes).
     HIER_MAB_10 = "Hier-MAB-10"
     HIER_MAB_100 = "Hier-MAB-100"
+    # The two tuned explore oracles -- see winning_configs.pdf.
+    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
+    IMOSS_TABPFN_TUNED = "IMOSS-TabPFN-tuned"
 
 
 class RegretData(TypedDict):
     regrets: list[float]
     simple_regrets: float
+
+
+_TABPFN_MODEL = None
+
+
+def _tabpfn_model():
+    global _TABPFN_MODEL
+    if _TABPFN_MODEL is None:
+        _TABPFN_MODEL = load_tabpfn()
+    return _TABPFN_MODEL
 
 
 def build_optimizer(
@@ -93,6 +107,28 @@ def build_optimizer(
         return TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0), True
     if algo == Algorithm.STROQUOOL:
         return TimedOptimizer(stroquool, n_iterations, dim), True
+    if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
+        return (
+            IMABOCoordUCB(
+                search_space=benchmark_obj.param_specs, seed=seed, beta=beta
+            ),
+            False,
+        )
+    if algo == Algorithm.IMOSS_TABPFN_TUNED:
+        return (
+            IMABOTabPFN(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                beta=beta,
+                candidate_source="mutation",
+                candidate_uniform_frac=0.1,
+                mutation_scale=0.1,
+                refit_every=1,
+                quantile=0.975,
+                tabpfn_model=_tabpfn_model(),
+            ),
+            False,
+        )
     if algo == Algorithm.HIER_MAB_10:
         return HierMAB(benchmark_obj.param_specs, n_points=10, seed=seed), False
     if algo == Algorithm.HIER_MAB_100:

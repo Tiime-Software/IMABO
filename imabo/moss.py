@@ -1,6 +1,8 @@
 import math
 from typing import Literal
 
+import numpy as np
+
 
 def moss_anytime(
     *,
@@ -135,6 +137,75 @@ def kl_ucb(mean: float, pulls: int, t: int, c: float = 0.0) -> float:
             hi = mid
     return lo
 
+
+
+class KLUCB1:
+    """KL-UCB over a fixed finite set of choices.
+
+    Used for :class:`imabo.coord_ucb.IMABOCoordUCB`'s coordinate bandit: the
+    choices are the ``d`` parameters of the search space, and a choice is
+    credited with the empirical mean of the arm that mutating it produced.
+
+    Every choice is forced once (its index is ``+inf`` until credited), then the
+    index of choice ``i`` is the largest ``q`` in ``[mean_i, 1]`` with
+    ``n_i * KL(mean_i, q) <= log(t)`` (:func:`kl_ucb`), where ``t`` counts this
+    bandit's own selections. Rewards must lie in [0, 1].
+
+    Why KL and not a Hoeffding width: on rewards whose spread is far below 1
+    (validation accuracies) the Hoeffding bonus dominates the mean gaps and the
+    choice degenerates towards round-robin -- at ``t=112, n=25, mean=0.9``, the
+    regime this bandit actually runs in, the widths are 0.61 (Hoeffding) against
+    0.09 (KL), for a signal of 0.09-0.16 to resolve. Measured, the two are within
+    noise of each other (KL better by 19.4 +- 18.7 on the RF grid), so this is a
+    choice on direction rather than on evidence; the Hoeffding variant and the
+    non-stationary alternatives that were tried (discounted-UCB, EXP3, EXP3.S,
+    per-parent bandits -- all worse) live on the `oracles-archive` branch.
+    """
+
+    def __init__(self, n_choices: int):
+        self.n = np.zeros(n_choices, dtype=np.float64)
+        self.sum = np.zeros(n_choices, dtype=np.float64)
+        self.t = 0
+
+    def select(self) -> int:
+        self.t += 1
+        unpulled = np.flatnonzero(self.n == 0)
+        if unpulled.size:
+            return int(unpulled[0])
+        return int(np.argmax(self.indices()))
+
+    def indices(self) -> np.ndarray:
+        """The KL-UCB index of every choice, ``+inf`` if never credited."""
+        pulled = self.n > 0
+        index = np.full(self.n.size, np.inf)
+        if not pulled.any():
+            # Nothing credited yet: every choice is maximally uncertain. Votes can
+            # lag well behind select() calls, so this is reachable.
+            return index
+        n = np.where(pulled, self.n, 1.0)
+        mean = self.sum / n
+        t = max(2, self.t)
+        for i in np.flatnonzero(pulled):
+            index[i] = kl_ucb(min(max(mean[i], 0.0), 1.0), float(self.n[i]), t)
+        return index
+
+    def update(self, idx: int, reward: float) -> None:
+        self.n[idx] += 1.0
+        self.sum[idx] += reward
+
+    def revise(self, idx: int, delta: float) -> None:
+        """Adjust a choice's accumulated reward WITHOUT counting a new vote.
+
+        The coordinate bandit credits one vote per proposed arm but keeps
+        sharpening its estimate of that arm as more pulls arrive, so the vote
+        count stays at one while its value is corrected (see
+        :class:`imabo.coord_ucb.IMABOCoordUCB`).
+        """
+        self.sum[idx] += delta
+
+    @property
+    def means(self) -> np.ndarray:
+        return self.sum / np.where(self.n > 0, self.n, 1.0)
 
 def ucb_siri(
     mean: float,

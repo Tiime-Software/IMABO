@@ -43,7 +43,7 @@ from tqdm import tqdm
 from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
-from imabo import IMABO
+from imabo import IMABO, IMABOCoordUCB
 from imabo.memory import config_to_key
 from imabo.optimizer import IMABOTabFM, load_tabfm
 from imabo.tabpfn_optimizer import IMABOTabPFN, load_tabpfn
@@ -92,6 +92,12 @@ class Algorithm(Enum):
     RANDOM = "Random Search"
     IMOSS_TABFM = "IMOSS-TabFM"
     IMOSS_TABPFN = "IMOSS-TabPFN"
+    # The two tuned explore oracles (see winning_configs.pdf). Both mutate the
+    # incumbent rather than sampling globally; they differ in what picks the
+    # mutation -- a KL-UCB coordinate bandit plus a univariate TPE, or TabPFN
+    # ranking a 100-candidate pool.
+    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
+    IMOSS_TABPFN_TUNED = "IMOSS-TabPFN-tuned"
     UCB_AIR = "UCB-AIR"
 
 
@@ -175,6 +181,25 @@ def build_optimizer(
             search_space=search_space,
             seed=seed,
             tabpfn_model=model,
+            beta=BETA,
+        )
+    elif algorithm == Algorithm.IMOSS_TABPFN_TUNED:
+        model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
+        return IMABOTabPFN(
+            search_space=search_space,
+            seed=seed,
+            tabpfn_model=model,
+            beta=BETA,
+            candidate_source="mutation",
+            candidate_uniform_frac=0.1,
+            mutation_scale=0.1,
+            refit_every=1,
+            quantile=0.975,
+        )
+    elif algorithm == Algorithm.IMOSS_MUTATE_KLXTPE:
+        return IMABOCoordUCB(
+            search_space=search_space,
+            seed=seed,
             beta=BETA,
         )
     elif algorithm == Algorithm.UCB_AIR:
@@ -333,7 +358,7 @@ def run_single_experiment(
     tabfm_candidate_true_rewards = []
     suggestion_counts: Counter = Counter()
     for i in tqdm(range(n_iterations), desc=algorithm.value, leave=False):
-        if has_oracle and i % oracle_probe_every == 0:
+        if has_oracle and n_shadow > 0 and i % oracle_probe_every == 0:
             # _oracle_propose() never calls memory.pull_arm()
             shadow = _shadow_copy(opt)
 
@@ -495,6 +520,7 @@ def run_multiple_experiments(
     max_num_rows: int | None = None,
     acquisition: str = "quantile",
     quantile: float = 0.99,
+    n_shadow: int = N_SHADOW,
 ) -> list[dict]:
     """Run multiple independent runs of a single algorithm, checkpointed per
     run."""
@@ -530,6 +556,7 @@ def run_multiple_experiments(
             max_num_rows=max_num_rows,
             acquisition=acquisition,
             quantile=quantile,
+            n_shadow=n_shadow,
         )
         with open(RESULT_DIR / f"{stem}_run{i}.json", "w") as f:
             json.dump(result, f)
@@ -558,6 +585,7 @@ def run_experiment(
     max_num_rows: int | None = None,
     acquisition: str = "quantile",
     quantile: float = 0.99,
+    n_shadow: int = N_SHADOW,
 ) -> None:
     # Load/warm up the surrogate model once (both loaders are memoized, so
     # passing a preloaded model in from the caller avoids re-warming per bench).
@@ -591,6 +619,7 @@ def run_experiment(
         max_num_rows=max_num_rows,
         acquisition=acquisition,
         quantile=quantile,
+        n_shadow=n_shadow,
     )
 
 
@@ -782,6 +811,18 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--plot-only", action="store_true", help="skip running, only (re)plot"
     )
+    p.add_argument(
+        "--n-shadow",
+        type=int,
+        default=N_SHADOW,
+        help=(
+            "oracle-quality probe draws per probe point; 0 disables the probe. "
+            "It runs on a DEEP COPY of the optimizer, so `regrets` is identical "
+            "either way -- but for a surrogate oracle it dominates the run: at "
+            "5000 iterations it makes ~50 TabPFN fits against the search's ~10. "
+            "Pass 0 when only the regret is needed (~7.5x faster)."
+        ),
+    )
     p.add_argument("--no-plot", action="store_true", help="run but skip plotting")
     p.add_argument(
         "--quick",
@@ -840,6 +881,7 @@ if __name__ == "__main__":
                         max_num_rows=args.max_num_rows,
                         acquisition=args.acquisition,
                         quantile=args.quantile,
+                        n_shadow=args.n_shadow,
                     )
                     bar.update(1)
                     done, total = bar.n, bar.total
