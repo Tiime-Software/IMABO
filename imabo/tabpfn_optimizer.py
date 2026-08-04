@@ -150,18 +150,18 @@ class IMABOTabPFN(IMABO):
         max_nb_pending_per_unrewarded_arm: int = 20,
         n_startup_trials: int = 10,
         switch_strategy: Literal["beta", "delayed"] = "beta",
-        beta: float = 0.8,
+        beta: float = 0.5,
         memory: Memory | None = None,
         min_arms_for_fit: int = 10,
         n_candidates: int = 100,
         acquisition: Literal["ucb", "quantile"] = "quantile",
-        quantile: float = 0.99,
+        quantile: float = 0.975,
         n_estimators: int = 4,
         max_num_rows: int | None = 200,
         refit_every: int = 1,
-        candidate_source: Literal["uniform", "mutation"] = "uniform",
+        candidate_source: Literal["uniform", "mutation"] = "mutation",
         candidate_uniform_frac: float = 0.1,
-        mutation_scale: float | None = None,
+        mutation_scale: float | None = 0.1,
         filter_open_candidates: bool = True,
         fit_granularity: Literal["arm", "pull"] = "arm",
         fit_mode: str | None = None,
@@ -469,9 +469,7 @@ class IMABOTabPFN(IMABO):
         parameter's domain excluding the parent's own value, or ``value_sampler``'s
         local step when ``mutation_scale`` is set.
         """
-        # rng.sample rather than rng.choice: it is what produced every stored
-        # result, and the two consume the random stream differently.
-        name = self.rng.sample(self.param_names, 1)[0]
+        name = self.rng.choice(self.param_names)
         return {
             **config,
             name: mutate_value(

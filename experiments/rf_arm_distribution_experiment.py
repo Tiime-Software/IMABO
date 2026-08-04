@@ -177,11 +177,18 @@ def build_optimizer(
         )
     elif algorithm == Algorithm.IMOSS_TABPFN:
         model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
+        # The untuned baseline: a uniform candidate pool, the shipped shortlist
+        # depth and the 0.99 quantile. Spelled out because the class defaults are
+        # now the tuned configuration.
         return IMABOTabPFN(
             search_space=search_space,
             seed=seed,
             tabpfn_model=model,
             beta=BETA,
+            candidate_source="uniform",
+            mutation_scale=None,
+            refit_every=10,
+            quantile=0.99,
         )
     elif algorithm == Algorithm.IMOSS_TABPFN_TUNED:
         model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
@@ -190,11 +197,8 @@ def build_optimizer(
             seed=seed,
             tabpfn_model=model,
             beta=BETA,
-            candidate_source="mutation",
-            candidate_uniform_frac=0.1,
-            mutation_scale=0.1,
-            refit_every=1,
-            quantile=0.975,
+            # Everything else is an IMABOTabPFN default: the class ships the
+            # tuned configuration.
         )
     elif algorithm == Algorithm.IMOSS_MUTATE_KLXTPE:
         return IMABOCoordUCB(
@@ -208,6 +212,12 @@ def build_optimizer(
             seed=seed,
             beta=BETA,
         )
+
+
+# Arms backed by TabPFN. The model must be warmed ONCE up front: it is loaded
+# lazily otherwise, and eight worker threads racing to load it hard-crashes the
+# process on Apple-silicon MPS with no traceback (see imabo.tabpfn_optimizer).
+_TABPFN_ALGORITHMS = (Algorithm.IMOSS_TABPFN, Algorithm.IMOSS_TABPFN_TUNED)
 
 
 # The oracle-proposal shadow probe (see _oracle_propose) always calls the real
@@ -592,7 +602,7 @@ def run_experiment(
     if algorithm == Algorithm.IMOSS_TABFM and tabfm_model is None:
         tabfm_model = load_tabfm()
         print("Loaded TabFM model (once, reused across all runs/budgets).")
-    if algorithm == Algorithm.IMOSS_TABPFN and tabpfn_model is None:
+    if algorithm in _TABPFN_ALGORITHMS and tabpfn_model is None:
         tabpfn_model = load_tabpfn()
         _silence_known_warnings()  # importing tabpfn/sklearn can reset filters
         print("TabPFN-3 ready (checkpoint cached; reused across all runs/budgets).")
@@ -853,7 +863,7 @@ if __name__ == "__main__":
         if tabfm_model is not None:
             print("Loaded TabFM model (once, reused across all runs/budgets).")
         tabpfn_model = None
-        if Algorithm.IMOSS_TABPFN in algorithms:
+        if any(a in algorithms for a in _TABPFN_ALGORITHMS):
             tabpfn_model = load_tabpfn()
             _silence_known_warnings()
             print("TabPFN-3 ready (checkpoint cached; reused across all runs/budgets).")

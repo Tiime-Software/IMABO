@@ -299,9 +299,24 @@ class TestWinningOracles:
         for m in mutants:
             assert sum(m[p] != parent[p] for p in opt.param_names) == 1
 
-    def test_tabpfn_uniform_pool_is_the_default(self):
-        opt = IMABOTabPFN(search_space=self.SPACE, seed=0, tabpfn_model={})
-        assert opt.candidate_source == "uniform"
+    def test_class_defaults_are_the_tuned_configuration(self):
+        # Constructing either oracle with no options must give the configuration
+        # winning_configs.pdf specifies -- that is the point of this branch.
+        t = IMABOTabPFN(search_space=self.SPACE, seed=0, tabpfn_model={})
+        assert (t.candidate_source, t.candidate_uniform_frac) == ("mutation", 0.1)
+        assert (t.mutation_scale, t.refit_every, t.quantile) == (0.1, 1, 0.975)
+        assert t.acquisition == "quantile" and t.filter_open_candidates is True
+        assert t.beta == 0.5
+        c = IMABOCoordUCB(search_space=self.SPACE, seed=0)
+        assert c.beta == 0.5 and c.min_arms_for_mutation == 10
+        assert c.n_ei_candidates == 24
+        assert isinstance(c.coord_bandit, KLUCB1)
+
+    def test_tabpfn_uniform_pool_still_available(self):
+        opt = IMABOTabPFN(
+            search_space=self.SPACE, seed=0, tabpfn_model={},
+            candidate_source="uniform",
+        )
         assert len(opt._sample_candidates([])) == opt.n_candidates
 
     def test_mutation_scale_is_a_no_op_on_categorical_axes(self):

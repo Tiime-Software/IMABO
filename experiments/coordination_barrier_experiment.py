@@ -266,8 +266,6 @@ def _build(land: Landscape, slug: str, n_iterations: int, seed: int, tabpfn_mode
             IMABOTabPFN(
                 search_space=land.search_space, seed=seed,
                 tabpfn_model=tabpfn_model, beta=BETA, n_estimators=4,
-                candidate_source="mutation", candidate_uniform_frac=0.1,
-                mutation_scale=0.1, refit_every=1, quantile=0.975,
             ),
             False,
         )
