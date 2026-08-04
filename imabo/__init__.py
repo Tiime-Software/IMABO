@@ -1,5 +1,6 @@
 """IMABO: Infinite Multi-Armed Bandits with Oracles."""
 
+from imabo.coord_ucb import IMABOCoordUCB
 from imabo.memory import (
     ArmStats,
     CurrentState,
@@ -9,6 +10,8 @@ from imabo.memory import (
     key_to_config,
 )
 from imabo.moss import (
+    EXP3,
+    UCB1,
     kl_divergence,
     kl_ucb,
     moss_anytime,
@@ -26,6 +29,7 @@ __all__ = [
     "FiniteIMABO",
     "IMABOTabFM",
     "IMABOTabPFN",
+    "IMABOCoordUCB",
     # Memory
     "InMemoryStorage",
     "Memory",
@@ -39,6 +43,8 @@ __all__ = [
     "kl_ucb",
     "kl_divergence",
     "ucb_siri",
+    "EXP3",
+    "UCB1",
     # TPE helpers
     "default_gamma",
     "hyperopt_default_gamma",

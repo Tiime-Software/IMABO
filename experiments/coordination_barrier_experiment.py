@@ -57,7 +57,7 @@ from tqdm import tqdm
 
 from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
-from imabo import IMABO
+from imabo import IMABO, IMABOCoordUCB
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "coordination_barrier"
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -204,6 +204,20 @@ IMOSS_METHODS = {
     "imoss_random": "IMOSS-Random",
     "imoss_tpe": "IMOSS-TPE",
     "imoss_tabpfn": "IMOSS-TabPFN",
+    "imoss_tabpfn_tuned": "IMOSS-TabPFN-tuned",
+    "imoss_tabpfn_tuned_q99": "IMOSS-TabPFN-tuned-q0.99",
+    "imoss_tabpfn_local_q99": "IMOSS-TabPFN-local-q0.99",
+    "imoss_tabpfn_q90": "IMOSS-TabPFN-q0.9",
+    "imoss_tabpfn_q975": "IMOSS-TabPFN-q0.975",
+    # Best surrogate-free explore oracle from the RF/toy/AutoML comparisons:
+    # mutate the best arm so far on a coordinate picked by a KL-UCB bandit
+    # (credited with that arm's mean reward), the value drawn by a univariate
+    # TPE. These landscapes exist to defeat coordinate-wise search, so this is
+    # the adversarial test for it.
+    "imoss_mutate_klxtpe": "IMOSS-mutate-KLxTPE",
+    # ... with one extra bandit arm proposing a whole multivariate-TPE config,
+    # so the bandit can buy its way out of a coordinate-wise dead end.
+    "imoss_mutate_klxtpe_global": "IMOSS-mutate-KLxTPE-global",
 }
 # "imoss_tpe_uni" (IMABO with multivariate=False: independent per-coordinate
 # Parzen estimators, a factored proposal) stays available in _build for
@@ -243,10 +257,59 @@ def _build(land: Landscape, slug: str, n_iterations: int, seed: int, tabpfn_mode
                   beta=BETA),
             False,
         )
+    if slug in ("imoss_mutate_klxtpe", "imoss_mutate_klxtpe_global"):
+        return (
+            IMABOCoordUCB(
+                global_tpe_arm=slug.endswith("_global"),
+                search_space=land.search_space,
+                seed=seed,
+                beta=BETA,
+                parent_rule="best",
+                coord_rule="ucb",
+                value_rule="tpe",
+                credit_rule="arm_mean",
+                bandit_bonus="kl",
+            ),
+            False,
+        )
     if slug == "imoss_tpe_uni":
         return (
             IMABO(search_space=land.search_space, seed=seed, multivariate=False,
                   beta=BETA),
+            False,
+        )
+    if slug in ("imoss_tabpfn_tuned_q99", "imoss_tabpfn_local_q99", "imoss_tabpfn_q90",
+                "imoss_tabpfn_q975"):
+        # Measured on family_d2: at quantile 0.841 the 10 uniform candidates in
+        # every pool win 0 of 183 explore steps, because a far-away point has a low
+        # predicted mean (the table holds only near-side arms) and the optimism
+        # bonus that could carry it is gone. At 0.99 they win 12%. These two put
+        # the quantile back, with and without the local step, to see whether the
+        # global picks the acquisition then makes are worth anything here.
+        from imabo.tabpfn_optimizer import IMABOTabPFN
+
+        return (
+            IMABOTabPFN(
+                search_space=land.search_space, seed=seed, tabpfn_model=tabpfn_model,
+                beta=BETA, n_estimators=4, candidate_source="mutation",
+                parent_rule="best", candidate_uniform_frac=0.1,
+                mutation_scale=None if slug == "imoss_tabpfn_local_q99" else 0.1,
+                refit_every=1, quantile={"imoss_tabpfn_q90": 0.9, "imoss_tabpfn_q975": 0.975}.get(slug, 0.99),
+            ),
+            False,
+        )
+    if slug == "imoss_tabpfn_tuned":
+        # Local step + refit every explore step + a 0.841 quantile: the settings
+        # tuned across the RF grid and the 2-D HPO boxes (see IMABOTabPFN).
+        from imabo.tabpfn_optimizer import IMABOTabPFN
+
+        return (
+            IMABOTabPFN(
+                search_space=land.search_space, seed=seed, tabpfn_model=tabpfn_model,
+                beta=BETA, n_estimators=4, candidate_source="mutation",
+                parent_rule="best", candidate_uniform_frac=0.1, mutation_scale=0.1,
+                refit_every=1, quantile=0.841,
+            ),
             False,
         )
     if slug == "imoss_tabpfn":

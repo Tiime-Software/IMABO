@@ -37,14 +37,74 @@ ALL = _IMOSS_FAMILY + ["UCB-AIR"]
 _ORACLE_LABELS = {
     "IMOSS-Random": "Random",
     "IMOSS-TPE": "TPE",
+    "IMOSS-TPE-eps0.1": "TPE + eps-greedy",
     "IMOSS-TPE-univ": "TPE-univ",
     "IMOSS-TabFM": "TabFM",
     "IMOSS-TabPFN": "TabPFN",
+    "IMOSS-TabPFN-pull": "TabPFN-pull",
+    "IMOSS-TabPFN-coord": "TabPFN-coord",
+    "IMOSS-TabPFN-coord-softmax": "TabPFN-coord (softmax)",
+    "IMOSS-TabPFN-coord-TPE": "TabPFN-coord-TPE",
+    "IMOSS-TabPFN-coord-TPE-softmax": "TabPFN-coord-TPE (softmax)",
+    "IMOSS-TabPFN-TPE": "TabPFN-TPE",
+    "IMOSS-coordUCB-TPE": "coordUCB-TPE",
+    "IMOSS-coordUCB-TPE-softmax": "coordUCB-TPE (softmax)",
+    "IMOSS-coordUCB-random": "coordUCB + uniform value",
+    "IMOSS-coordUCB-TPE-contrib": "coordUCB-TPE (contribution)",
+    "IMOSS-Hier-MAB-contrib": "Hier-MAB rule (contribution)",
+    "IMOSS-coordUCB-TPE-lastprop": "coordUCB-TPE (own last proposal)",
+    "IMOSS-coordUCB-TPE-moss": "coordUCB-TPE (exploited arm)",
+    "IMOSS-Hier-MAB-lastprop": "Hier-MAB rule (own last proposal)",
+    "IMOSS-Hier-MAB-moss": "Hier-MAB rule (exploited arm)",
+    "IMOSS-Hier-MAB-newarm": "Hier-MAB rule (new arm required)",
+    "IMOSS-coordUCB-TPE-newarm": "coordUCB-TPE (new arm required)",
+    "IMOSS-mutate-random": "random coord + random value",
+    "IMOSS-mutate-TPE": "random coord + TPE value",
+    "IMOSS-mutate-TPE-newarm": "random coord + TPE (new arm)",
+    "IMOSS-mutate-TPE-k2": "2 coords + TPE (new arm)",
+    "IMOSS-mutate-TPE-kgeom": "1+geom coords + TPE (new arm)",
+    "IMOSS-Hier-MAB": "Hier-MAB rule (last)",
+    "IMOSS-Hier-MAB-softmax": "Hier-MAB rule (softmax)",
+    "IMOSS-Hier-MAB-mean": "Hier-MAB rule (arm-mean credit)",
+    "IMOSS-Hier-MAB-improve": "Hier-MAB rule (improvement credit)",
 }
+
+
+def _oracle_label(series: str) -> str:
+    """Short oracle name for the bottom-row legend, keeping any run-config tag.
+
+    The bottom row is about which oracle proposes the next arm, so the legend
+    drops the algorithm prefix ("IMOSS-TabPFN" -> "TabPFN"). A trailing
+    ``-beta<b>`` tag (a series run at a non-default switching exponent -- see
+    rf_arm_distribution_experiment.algo_label) is split off first and re-appended,
+    so those series shorten too instead of falling through to their full name.
+    """
+    base, sep, tag = series.partition("-beta")
+    short = _ORACLE_LABELS.get(base, base)
+    return f"{short}{sep}{tag}" if sep else short
+
 
 # Per-series linestyle overrides (color+marker come from algorithm_style):
 # the univariate-TPE variant shares IMOSS-TPE's orange, so it is dashed.
-_SERIES_LINESTYLE = {"IMOSS-TPE-univ": "--"}
+_SERIES_LINESTYLE = {
+    "IMOSS-TPE-univ": "--",
+    "IMOSS-TPE-eps0.1": "--",
+    "Hier-TPE": "--",
+}
+
+# Per-series (color, marker) overrides, for series that must stay visually
+# distinct from the canonical identity they normalize to. The shared style table
+# is keyed by METHOD, so the same method run at two configurations (e.g.
+# IMOSS-TabPFN-coord at two switching exponents, drawn in one panel) resolves to
+# one style; the caller registers the variant's own marker here. Populated by
+# rf_arm_distribution_experiment.make_plots, empty for the default figures.
+_SERIES_STYLE: dict[str, tuple[str, str]] = {}
+
+
+def _series_style(algo: str) -> tuple[str, str]:
+    """(color, marker) for a plotted series -- an override if one is registered
+    (see _SERIES_STYLE), else the canonical per-method style."""
+    return _SERIES_STYLE.get(algo, _style_for(algo))
 
 
 def _load_trace_field(
@@ -598,7 +658,7 @@ def _plot_suggestion_metric_grid(
             iters, mean, std = traces[algo]
             mean = _ema(mean, smoothing_span)
             std = _ema(std, smoothing_span)
-            color, marker = _style_for(algo)
+            color, marker = _series_style(algo)
             (line,) = ax.plot(
                 iters,
                 mean,
@@ -1677,6 +1737,7 @@ def plot_regret_and_oracle_grid(
     conference="aaai",
     out_name="regret_and_oracle_grid",
     final_errorbar=None,
+    average=False,
 ):
     """Paper figure: cumulative regret (top row) and oracle proposal quality
     (bottom row), one column per benchmark, per-column x-axis -- combines
@@ -1707,6 +1768,15 @@ def plot_regret_and_oracle_grid(
     default length of 3, `columns=1` packs 6 panels into one column's width
     and will be cramped -- prefer `columns=2` (a LaTeX `figure*`) unless
     you've also cut down the number of benchmarks shown.
+
+    ``average=True`` divides each cumulative curve by the round index, i.e.
+    plots the running MEAN regret per pull instead of the total. The y-range is
+    then set from the last 90% of the horizon: the first rounds average over a
+    handful of pulls and spike far above everything else, which would otherwise
+    compress the whole comparison into the bottom of the panel. The curves then
+    share a common scale set by the tail rather than growing ~linearly, which
+    separates methods whose cumulative curves are visually parallel; the ranking
+    at t=T is identical either way (division by T is monotone).
 
     regret_algorithms defaults to ALL (includes UCB-AIR, which only has a
     regret trace -- see rf_arm_distribution_experiment.has_oracle);
@@ -1758,8 +1828,10 @@ def plot_regret_and_oracle_grid(
             runs = np.vstack(traces_by_algo[algo])  # n_runs x n_iterations
             iters = np.arange(1, runs.shape[1] + 1)
             cumulative_runs = np.cumsum(runs, axis=1)
+            if average:
+                cumulative_runs = cumulative_runs / iters
             cumulative_mean = cumulative_runs.mean(axis=0)
-            color, marker = _style_for(algo)
+            color, marker = _series_style(algo)
             (line,) = ax.plot(
                 iters,
                 cumulative_mean,
@@ -1791,6 +1863,19 @@ def plot_regret_and_oracle_grid(
                 )
             seen_top.setdefault(algo, line)
 
+        if average and seen_top:
+            # Ignore the warm-up spike when framing the panel (see the docstring).
+            lo, hi = [], []
+            for line in ax.get_lines():
+                x, y = np.asarray(line.get_xdata()), np.asarray(line.get_ydata())
+                tail = y[x >= 0.1 * x.max()]
+                if tail.size:
+                    lo.append(tail.min())
+                    hi.append(tail.max())
+            if lo:
+                pad = 0.08 * (max(hi) - min(lo) or max(hi))
+                ax.set_ylim(max(0.0, min(lo) - pad), max(hi) + pad)
+
         ax.set_title(
             _bench_title(benchmark),
             fontweight="bold",
@@ -1800,7 +1885,9 @@ def plot_regret_and_oracle_grid(
         style.style_axis(ax)
 
     axes_top[0].set_ylabel(
-        "Cumulative\nRegret", fontweight="bold", fontsize=style.label_fontsize
+        "Average\nRegret" if average else "Cumulative\nRegret",
+        fontweight="bold",
+        fontsize=style.label_fontsize,
     )
 
     seen_bottom: dict = {}
@@ -1813,7 +1900,7 @@ def plot_regret_and_oracle_grid(
             iters, mean_runs, std_runs = traces[algo]
             mean = _ema(mean_runs.mean(axis=0), smoothing_span)
             std = _ema(std_runs.mean(axis=0), smoothing_span)
-            color, marker = _style_for(algo)
+            color, marker = _series_style(algo)
             (line,) = ax.plot(
                 iters,
                 mean,
@@ -1882,7 +1969,7 @@ def plot_regret_and_oracle_grid(
     create_figure_legend(
         fig,
         [seen_bottom[a] for a in ordered_bottom],
-        [_ORACLE_LABELS.get(a, a) for a in ordered_bottom],
+        [_oracle_label(a) for a in ordered_bottom],
         ncol=bottom_ncol,
         bbox_y=mid_pos.y0 + mid_pos.height / 2,
         loc="center",

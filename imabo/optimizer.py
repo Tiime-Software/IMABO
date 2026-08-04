@@ -68,6 +68,7 @@ class IMABO:
         use_tpe: bool = True,
         memory: Memory | None = None,
         tpe_split_bound: Literal["moss", "lcb"] = "moss",
+        eps_greedy: float = 0.0,
     ):
         """Initialize the IMABO optimizer.
 
@@ -91,6 +92,14 @@ class IMABO:
             tpe_split_bound: Index used to rank arms in :meth:`tpe_split`,
                 "moss" (default, MOSS-anytime UCB) or "lcb" (classic UCB1-style
                 lower confidence bound, an alternative pessimistic ranking).
+            eps_greedy: Probability that an explore step ignores the oracle and
+                draws a uniform random configuration instead (0.0 = never, the
+                default). TPE proposes by imitating the density of the good
+                observations, so it has no term that grows for a region it has
+                not sampled -- only the Parzen prior, one pseudo-count against
+                the whole history. This forces a fixed floor of unconditional
+                exploration on top of it. Affects :meth:`suggest_new` only, so
+                the exploit phase and the switching rule are untouched.
         """
         self.search_space_specs = search_space
         self.param_names = list(sorted(search_space.keys()))
@@ -117,6 +126,9 @@ class IMABO:
         self.multivariate = multivariate
         self.use_tpe = use_tpe
         self.tpe_split_bound = tpe_split_bound
+        if not 0.0 <= eps_greedy <= 1.0:
+            raise ValueError(f"eps_greedy must be in [0, 1], got {eps_greedy}")
+        self.eps_greedy = eps_greedy
 
         self.last_suggested: ArmConfig | None = None
 
@@ -310,8 +322,15 @@ class IMABO:
         nb_pending_total: int = 0,
         nb_rewarded_total: int = 0,
     ) -> ArmConfig:
-        """Propose a new configuration using the TPE oracle (explore)."""
+        """Propose a new configuration using the TPE oracle (explore).
+
+        With probability ``eps_greedy`` the oracle is skipped and the proposal is
+        a uniform random configuration -- an exploration floor TPE itself does
+        not provide (see the constructor's ``eps_greedy``).
+        """
         if not rewarded_arms:
+            return self.generate_random_config()
+        if self.eps_greedy and self.rng.random() < self.eps_greedy:
             return self.generate_random_config()
 
         good, bad = self.tpe_split(

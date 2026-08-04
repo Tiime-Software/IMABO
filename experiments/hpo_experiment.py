@@ -25,6 +25,8 @@ from typing import TypedDict
 
 from tqdm import tqdm
 
+from experiments.baselines.hier_mab import HierMAB
+from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.benchmarks.config import BENCHMARKS
 from experiments.benchmarks.hpo_bench.client import (
     api_call,
@@ -32,10 +34,9 @@ from experiments.benchmarks.hpo_bench.client import (
     stop_hpo_server,
 )
 from experiments.benchmarks.hpo_wrapper import HPOBenchmark
-from experiments.baselines.hier_mab import HierMAB
-from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.utils.stats import calculate_statistics
-from imabo import IMABO
+from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
+from imabo.tabpfn_optimizer import load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -57,11 +58,73 @@ class Algorithm(Enum):
     # values per axis (HierMAB's axis_values does exactly this for log axes).
     HIER_MAB_10 = "Hier-MAB-10"
     HIER_MAB_100 = "Hier-MAB-100"
+    # Best surrogate-free explore oracle from the RF-tabular comparison: mutate
+    # the best arm so far on a coordinate chosen by a KL-UCB bandit, the new value
+    # drawn by a univariate TPE. Needs no axis grid, unlike Hier-MAB, so it
+    # searches these log-scaled continuous boxes directly.
+    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
+    # ... plus an extra bandit arm proposing a whole multivariate-TPE config.
+    IMOSS_MUTATE_KLXTPE_GLOBAL = "IMOSS-mutate-KLxTPE-global"
+    # The two best TabPFN configurations from the RF-tabular comparison, both at
+    # refit_every=1 -- the parameter that turned out to dominate that family
+    # (438.0 and 421.4, against 536.9 for the same pool at the default 10).
+    # NOTE these boxes are continuous, so two of the mechanisms that mattered on
+    # the finite grid are vacuous here: mutants never collide, so deduplication
+    # and the already-open-arm filter are both no-ops and the pool can never
+    # saturate. What is left of the difference between these two arms is purely
+    # how many coordinates a mutant changes.
+    IMOSS_TABPFN_R1 = "IMOSS-TabPFN-r1"
+    IMOSS_TABPFN_KGEOM_R1 = "IMOSS-TabPFN-kgeom-r1"
+    # Those two lose badly here (+113 on lr, +311 on svm vs IMOSS-mutate-KLxTPE),
+    # and the reason is the candidate distribution, not the surrogate: on a
+    # continuous axis mutate_value resamples LOG-UNIFORMLY OVER THE WHOLE DOMAIN,
+    # so a "mutant" sits a mean 0.25 of the axis' log-range from the incumbent --
+    # 1.25 decades on a 5-decade axis, with only 19% within 10%. The pool is a
+    # global search along two axis-aligned lines, and TabPFN never sees a
+    # candidate worth exploiting. Three pools that fix that, all at refit=1:
+    #   -tpemut  value drawn from the univariate TPE's good-arm density l, i.e.
+    #            exactly IMOSS-mutate-KLxTPE's proposal, re-ranked by TabPFN.
+    #            Needs pick="sample": the EI-argmax is deterministic per
+    #            coordinate, so on a 2-D box all 90 mutants collapse to 2 points.
+    #   -local   a real evolutionary step -- Gaussian in log space at 0.1 of the
+    #            axis width, which puts 69% of mutants within 10% of the parent.
+    #   -jtpe    no mutation at all: 100 joint draws from the multivariate l.
+    IMOSS_TABPFN_TPEMUT_R1 = "IMOSS-TabPFN-tpemut-r1"
+    IMOSS_TABPFN_LOCAL_R1 = "IMOSS-TabPFN-local-r1"
+    IMOSS_TABPFN_JTPE_R1 = "IMOSS-TabPFN-jtpe-r1"
+    # None of those three closed the gap -- notably -tpemut, which hands TabPFN
+    # exactly IMOSS-mutate-KLxTPE's own proposal density and still loses 0/20. So
+    # the pool is not the bottleneck; the RANKING is. The acquisition is the 0.99
+    # quantile of the predictive distribution, which rewards variance: on the RF
+    # grid every candidate sits in one 25-config neighbourhood so variance is
+    # near-uniform and the quantile acts like a mean, but on a 2-D box spanning
+    # five decades it systematically picks the least familiar candidate -- i.e.
+    # it explores, on top of an IMOSS switching rule that already does. These two
+    # sweep it down to greedy-on-the-mean.
+    IMOSS_TABPFN_LOCAL_Q50 = "IMOSS-TabPFN-local-q0.5"
+    IMOSS_TABPFN_LOCAL_Q841 = "IMOSS-TabPFN-local-q0.841"
+    IMOSS_TABPFN_LOCAL_Q90 = "IMOSS-TabPFN-local-q0.9"
+    # kappa = Phi^-1(q): 0.841 -> 1.00, 0.9 -> 1.28, 0.975 -> 1.96, 0.99 -> 2.33.
+    # 0.975 already matches 0.99 on the RF grid and is the highest quantile that
+    # still shrinks the variance bonus, so it is the best fixed-value candidate.
+    IMOSS_TABPFN_LOCAL_Q975 = "IMOSS-TabPFN-local-q0.975"
 
 
 class RegretData(TypedDict):
     regrets: list[float]
     simple_regrets: float
+
+
+# Loaded once on first use and shared across every run: the weights are frozen
+# and never mutated, and re-warming per run would dominate the wall clock.
+_TABPFN_MODEL: dict | None = None
+
+
+def _tabpfn_model() -> dict:
+    global _TABPFN_MODEL
+    if _TABPFN_MODEL is None:
+        _TABPFN_MODEL = load_tabpfn()
+    return _TABPFN_MODEL
 
 
 def build_optimizer(
@@ -97,6 +160,103 @@ def build_optimizer(
         return HierMAB(benchmark_obj.param_specs, n_points=10, seed=seed), False
     if algo == Algorithm.HIER_MAB_100:
         return HierMAB(benchmark_obj.param_specs, n_points=100, seed=seed), False
+    if algo == Algorithm.IMOSS_MUTATE_KLXTPE_GLOBAL:
+        return (
+            IMABOCoordUCB(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                beta=beta,
+                parent_rule="best",
+                coord_rule="ucb",
+                value_rule="tpe",
+                credit_rule="arm_mean",
+                bandit_bonus="kl",
+                global_tpe_arm=True,
+            ),
+            False,
+        )
+    if algo in (Algorithm.IMOSS_TABPFN_LOCAL_Q50, Algorithm.IMOSS_TABPFN_LOCAL_Q841,
+                Algorithm.IMOSS_TABPFN_LOCAL_Q90,
+                Algorithm.IMOSS_TABPFN_LOCAL_Q975):
+        return (
+            IMABOTabPFN(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                beta=beta,
+                candidate_source="mutation",
+                parent_rule="best",
+                candidate_uniform_frac=0.1,
+                refit_every=1,
+                mutation_scale=0.1,
+                quantile={
+                    Algorithm.IMOSS_TABPFN_LOCAL_Q50: 0.5,
+                    Algorithm.IMOSS_TABPFN_LOCAL_Q90: 0.9,
+                    Algorithm.IMOSS_TABPFN_LOCAL_Q975: 0.975,
+                }.get(algo, 0.841),
+                tabpfn_model=_tabpfn_model(),
+            ),
+            False,
+        )
+    if algo in (
+        Algorithm.IMOSS_TABPFN_TPEMUT_R1,
+        Algorithm.IMOSS_TABPFN_LOCAL_R1,
+        Algorithm.IMOSS_TABPFN_JTPE_R1,
+    ):
+        source = {
+            Algorithm.IMOSS_TABPFN_TPEMUT_R1: "mutation_tpe",
+            Algorithm.IMOSS_TABPFN_LOCAL_R1: "mutation",
+            Algorithm.IMOSS_TABPFN_JTPE_R1: "tpe",
+        }[algo]
+        return (
+            IMABOTabPFN(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                beta=beta,
+                candidate_source=source,
+                parent_rule="best",
+                candidate_uniform_frac=0.1,
+                refit_every=1,
+                tpe_value_pick="sample",
+                mutation_scale=(
+                    0.1 if algo is Algorithm.IMOSS_TABPFN_LOCAL_R1 else None
+                ),
+                tabpfn_model=_tabpfn_model(),
+            ),
+            False,
+        )
+    if algo in (Algorithm.IMOSS_TABPFN_R1, Algorithm.IMOSS_TABPFN_KGEOM_R1):
+        return (
+            IMABOTabPFN(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                beta=beta,
+                candidate_source="mutation",
+                parent_rule="best",
+                candidate_uniform_frac=0.1,
+                refit_every=1,
+                mutation_size=(
+                    "geometric"
+                    if algo is Algorithm.IMOSS_TABPFN_KGEOM_R1
+                    else 1
+                ),
+                tabpfn_model=_tabpfn_model(),
+            ),
+            False,
+        )
+    if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
+        return (
+            IMABOCoordUCB(
+                search_space=benchmark_obj.param_specs,
+                seed=seed,
+                beta=beta,
+                parent_rule="best",
+                coord_rule="ucb",
+                value_rule="tpe",
+                credit_rule="arm_mean",
+                bandit_bonus="kl",
+            ),
+            False,
+        )
     raise ValueError(f"unknown algorithm: {algo!r}")
 
 
@@ -258,16 +418,28 @@ def save_iterations_to_csv(
 
 
 async def main():
-    benchmarks_to_run = ["lr", "svm"]
-    n_runs = 20
-    base_seed = 42
+    import argparse
 
-    test_cases_per_benchmark = [
-        (10000,),
-        (5000,),
-        (3000,),
-        (1000,),
-    ]
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--benchmarks", nargs="+", default=["lr", "svm"])
+    ap.add_argument("--iters", type=int, nargs="+", default=[10000, 5000, 3000, 1000])
+    ap.add_argument("--n-runs", type=int, default=20)
+    ap.add_argument(
+        "--algorithms",
+        nargs="+",
+        default=None,
+        help="algorithm values to run; default is every member of Algorithm",
+    )
+    ap.add_argument("--no-csv", action="store_true", help="skip the summary CSVs")
+    args = ap.parse_args()
+
+    benchmarks_to_run = args.benchmarks
+    n_runs = args.n_runs
+    base_seed = 42
+    only = (
+        [Algorithm(a) for a in args.algorithms] if args.algorithms else None
+    )
+    test_cases_per_benchmark = [(n,) for n in args.iters]
 
     if not await start_hpo_server():
         print("Failed to start server")
@@ -295,11 +467,12 @@ async def main():
                     n_runs=n_runs,
                     base_seed=base_seed,
                     beta=BETA,
+                    algorithms=only,
                 )
                 if all_results:
                     results_dict[keys[i]] = calculate_statistics(all_results)
 
-            if results_dict:
+            if results_dict and not args.no_csv:
                 save_results_to_csv(results_dict, benchmark, exp_type="hpo", beta=BETA)
                 save_iterations_to_csv(
                     results_dict, benchmark, exp_type="hpo", beta=BETA

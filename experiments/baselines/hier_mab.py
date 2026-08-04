@@ -41,81 +41,19 @@ assumed already normalised to [0, 1] by the caller.
 
 from __future__ import annotations
 
-import math
 from typing import Any, Optional
 
 import numpy as np
-from optuna.distributions import (
-    CategoricalDistribution,
-    FloatDistribution,
-    IntDistribution,
-)
 
 from imabo.memory import config_to_key, key_to_config
+from imabo.moss import UCB1
+from imabo.mutation import axis_values
 from imabo.tpe import create_search_space
 
-
-def axis_values(dist, n_points: int) -> list[Any]:
-    """Enumerate the values Hier-MAB may place on one axis.
-
-    Hier-MAB requires each axis to be an explicit finite set -- it cannot admit
-    a value outside the declared list, which is one of its genuine limitations
-    relative to an oracle that proposes into a continuous space. Categorical
-    axes (what ``RFTabularFiniteBenchmark`` hands us) are used verbatim, so on
-    the RF tabular grid the low-level arm sets are exactly the benchmark's own
-    discretisation and nothing is invented. Continuous and integer axes are
-    discretised on an evenly spaced (or log-spaced) grid so the baseline can
-    also run on the LR/SVM and HotpotQA spaces.
-    """
-    if isinstance(dist, CategoricalDistribution):
-        return list(dist.choices)
-    if isinstance(dist, IntDistribution):
-        lo, hi = int(dist.low), int(dist.high)
-        if hi - lo + 1 <= n_points:
-            return list(range(lo, hi + 1))
-        if dist.log:
-            raw = np.exp(np.linspace(math.log(max(lo, 1)), math.log(hi), n_points))
-        else:
-            raw = np.linspace(lo, hi, n_points)
-        return sorted({int(round(v)) for v in raw})
-    if isinstance(dist, FloatDistribution):
-        # Plain Python floats, not np.float64: suggested configs get written
-        # to JSON checkpoints by the callers (e.g. hotpotqa_experiment).
-        if dist.log:
-            # np.geomspace, not exp(linspace(log lo, log hi)): geomspace pins
-            # both endpoints exactly, while the exp/log roundtrip lands a hair
-            # outside the bounds (e.g. 9.9999...e-06 for lo=1e-05), which
-            # strict validators like ConfigSpace reject.
-            return [float(v) for v in np.geomspace(dist.low, dist.high, n_points)]
-        return [float(v) for v in np.linspace(dist.low, dist.high, n_points)]
-    raise TypeError(f"unsupported distribution for Hier-MAB axis: {type(dist)!r}")
-
-
-class _UCB1:
-    """UCB1 over a fixed finite set of choices, shared by both levels."""
-
-    def __init__(self, n_choices: int, alpha: float = 1.0):
-        self.n = np.zeros(n_choices, dtype=np.int64)
-        self.sum = np.zeros(n_choices, dtype=np.float64)
-        self.alpha = alpha
-        self.t = 0
-
-    def select(self) -> int:
-        self.t += 1
-        unpulled = np.flatnonzero(self.n == 0)
-        if unpulled.size:
-            return int(unpulled[0])
-        mean = self.sum / self.n
-        bonus = np.sqrt(self.alpha * 2.0 * math.log(max(2, self.t)) / self.n)
-        return int(np.argmax(mean + bonus))
-
-    def update(self, idx: int, reward: float) -> None:
-        self.n[idx] += 1
-        self.sum[idx] += reward
-
-    @property
-    def means(self) -> np.ndarray:
-        return self.sum / np.maximum(self.n, 1)
+# The UCB1 index used by both levels. It moved to imabo.moss unchanged so the
+# coordinate-selection bandit of imabo.coord_ucb.IMABOCoordUCB is literally this
+# bandit rather than a copy of it.
+_UCB1 = UCB1
 
 
 class HierMAB:

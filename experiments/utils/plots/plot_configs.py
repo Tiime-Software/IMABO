@@ -97,10 +97,71 @@ _PALETTE_SKY = "#56B4E9"
 ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     "IMOSS-Random": (_PALETTE_BLUE, "o"),  # rf (random oracle; a.k.a. IMOSS)
     "IMOSS-TPE": (_PALETTE_ORANGE, "^"),  # rf, hotpotqa, hpo   (a.k.a. IMABO)
+    # TPE with an eps-greedy exploration floor: same oracle family as IMOSS-TPE,
+    # so the family orange with its own marker (+ a dashed line set locally).
+    "IMOSS-TPE-eps0.1": (_PALETTE_ORANGE, "*"),  # rf (eps-greedy TPE)
     "IMOSS-TabFM": (_PALETTE_GREEN, "s"),  # rf, hotpotqa
     "IMOSS-TabPFN": (_PALETTE_GREEN, "s"),  # rf (TabPFN comparison)
     # Per-pull TabPFN variant (fit on individual pulls, not per-arm means).
     "IMOSS-TabPFN-pull": (_PALETTE_GREEN, "X"),  # rf (TabPFN per-pull comparison)
+    # Mutation-pool TabPFN variant (candidate_source="mutation"): the same
+    # oracle scoring an evolutionary pool instead of a uniform one. It appears
+    # in the RF regret figure NEXT TO plain IMOSS-TabPFN and the four other core
+    # colors, so it can't share the family green (two green mean+band pairs in
+    # one panel read as one method); it takes the remaining Wong color (sky
+    # blue) with its own marker.
+    "IMOSS-TabPFN-coord": (_PALETTE_SKY, "X"),  # rf (mutation pool, local parent)
+    # Parent-rule siblings. Each co-occurs with its base method, and
+    # same-colour/different-marker proved unreadable at figure size (it was tried
+    # for the IMOSS-Hier-MAB pair first), so each gets its own colour.
+    "IMOSS-TabPFN-coord-softmax": ("#DDAA33", "P"),  # rf (population parent)
+    # The rest of the proposal-pool comparison. All of these co-occur in ONE
+    # panel with the five core colors, which the Wong set cannot cover, so the
+    # two remaining identities take colorblind-safe hues from Tol's palette
+    # (gray is Wong's own neutral): mutation pool + univariate-TPE value, pool
+    # drawn from TPE's density, and the surrogate-free coordinate-bandit oracle.
+    "IMOSS-TabPFN-coord-TPE": ("#44BB99", "v"),
+    "IMOSS-TabPFN-coord-TPE-sampled": ("#EE8866", "^"),  # rf (sampled TPE value)  # rf (mutation+TPE value, best parent)
+    "IMOSS-TabPFN-coord-TPE-softmax": ("#999999", "1"),  # rf (mutation pool, TPE value)
+    "IMOSS-TabPFN-TPE": ("#332288", "<"),  # rf (TPE-sampled pool, TabPFN ranks)
+    "IMOSS-coordUCB-TPE": ("#882255", "h"),  # rf (no surrogate: UCB1 coordinate)
+    "IMOSS-coordUCB-TPE-softmax": ("#004488", "8"),  # rf (population parent)
+    "IMOSS-coordUCB-random": ("#CC3311", "s"),  # rf (UCB1 coordinate, uniform value)
+    # Contribution-ranked coordinates + a novelty requirement.
+    "IMOSS-coordUCB-TPE-contrib": ("#0077BB", "X"),  # rf
+    "IMOSS-coordUCB-TPE-lastprop": ("#33BBEE", "<"),  # rf (parent = own last proposal)
+    "IMOSS-coordUCB-TPE-moss": ("#009988", ">"),  # rf (parent = the exploited arm)
+    "IMOSS-coordUCB-TPE-newarm": ("#994455", "P"),  # rf (novelty required, alone)
+    "IMOSS-Hier-MAB-newarm": ("#997700", "X"),  # rf (novelty required, alone)
+    "IMOSS-mutate-random": ("#BBBBBB", "o"),  # rf (uniform coordinate AND value)
+    "IMOSS-mutate-TPE": ("#6699CC", "d"),  # rf (uniform coordinate, TPE value)
+    "IMOSS-mutate-TPE-newarm": ("#004488", "d"),  # rf (+ novelty required)
+    "IMOSS-mutate-TPE-k2": ("#DDAA33", "s"),  # rf (2 coordinates per mutation)
+    "IMOSS-mutate-TPE-kgeom": ("#BB5566", "v"),  # rf (1 + geometric tail)
+    # KL-UCB bandits (variance-adapted), coordinate x value ablation.
+    "IMOSS-mutate-KLxKL": ("#004488", "P"),  # rf
+    "IMOSS-mutate-KLxKL-newarm": ("#997700", "X"),  # rf (both KL + masked novelty)
+    "IMOSS-mutate-KLxTPE": ("#000000", "*"),  # rf, toy, lr/svm (headline oracle)
+    "IMOSS-mutate-KLxrand": ("#BB5566", "s"),  # rf
+    "IMOSS-mutate-randxKL": ("#009988", "D"),  # rf
+    # Improvement credit at two widths.
+    "IMOSS-mutate-UCBxTPE-improve": ("#EE7733", "P"),  # rf (UCB1 width)
+    "IMOSS-mutate-KLxTPE-improve": ("#332288", "*"),  # rf (rescaled KL width)
+    "IMOSS-mutate-KLxTPE-global": ("#CC3311", "P"),
+    "IMOSS-mutate-KLxTPE-sampled": ("#88CCEE", "v"),  # rf (value sampled from l)
+    "IMOSS-mutate-KLxTPE-newarm": ("#44AA99", "^"),  # rf (masked novelty)  # rf, barrier (+ global TPE arm)
+    "IMOSS-Hier-MAB-contrib": ("#EE3377", "P"),  # rf
+    "IMOSS-Hier-MAB-lastprop": ("#DDAA33", "^"),  # rf (parent = own last proposal)
+    "IMOSS-Hier-MAB-moss": ("#EE7733", "v"),  # rf (parent = the exploited arm)
+    # Hier-MAB's proposal rule as an IMOSS explore oracle. The parent rule is the
+    # contrast these two exist to show, so it gets its own COLOUR channel rather
+    # than a marker: same-colour/different-marker was unreadable at figure size.
+    # (Beta stays on the linestyle, set locally in rf_arm_distribution_plot.)
+    "IMOSS-Hier-MAB": ("#117733", "s"),  # rf (parent = last served config)
+    "IMOSS-Hier-MAB-softmax": ("#AA4499", "D"),  # rf (parent = softmax draw)
+    # Credit-rule siblings: same proposal rule, better-estimated votes.
+    "IMOSS-Hier-MAB-mean": ("#EE7733", "v"),  # rf (vote = arm's running mean)
+    "IMOSS-Hier-MAB-improve": ("#009988", "^"),  # rf (vote = mean - parent's mean)
     "UCB-AIR": (_PALETTE_VERMILLION, "D"),  # rf, hotpotqa
     # hier_compare only; never co-occurs with IMOSS-Random, so blue is free.
     # The alpha ablation is the same method, so it keeps the colour and is
@@ -117,6 +178,10 @@ ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     # share a slot: it gets the palette's fifth Wong color (reddish purple),
     # plus a unique marker.
     "Hier-MAB": (_PALETTE_PURPLE, "*"),  # rf, hotpotqa (regret comparison)
+    # Hier-MAB with its low-level value bandit swapped for a univariate TPE: same
+    # method family, so the family purple is kept and the pair is separated by
+    # marker plus a dashed linestyle (set in rf_arm_distribution_plot).
+    "Hier-TPE": (_PALETTE_PURPLE, "P"),  # rf (low-level-TPE variant)
     # Continuous LR/SVM comparison: Hier-MAB run at two geometric-grid
     # resolutions (10 vs 100 values per axis). They co-occur with each other
     # (and with HOO-T's blue) but never with plain "Hier-MAB", so the 10-point
@@ -151,9 +216,46 @@ _ALGORITHM_ALIASES = {
     "imoss": "IMOSS-Random",
     "imoss-random": "IMOSS-Random",
     "imoss-tpe": "IMOSS-TPE",
+    "imoss-tpe-eps0.1": "IMOSS-TPE-eps0.1",
     "imoss-tabfm": "IMOSS-TabFM",
     "imoss-tabpfn": "IMOSS-TabPFN",
     "imoss-tabpfn-pull": "IMOSS-TabPFN-pull",
+    "imoss-tabpfn-coord": "IMOSS-TabPFN-coord",
+    "imoss-tabpfn-coord-softmax": "IMOSS-TabPFN-coord-softmax",
+    "imoss-tabpfn-coord-tpe": "IMOSS-TabPFN-coord-TPE",
+    "imoss-tabpfn-coord-tpe-sampled": "IMOSS-TabPFN-coord-TPE-sampled",
+    "imoss-tabpfn-coord-tpe-softmax": "IMOSS-TabPFN-coord-TPE-softmax",
+    "imoss-tabpfn-tpe": "IMOSS-TabPFN-TPE",
+    "imoss-coorducb-tpe": "IMOSS-coordUCB-TPE",
+    "imoss-coorducb-tpe-softmax": "IMOSS-coordUCB-TPE-softmax",
+    "imoss-coorducb-random": "IMOSS-coordUCB-random",
+    "imoss-mutate-tpe": "IMOSS-mutate-TPE",
+    "imoss-mutate-randxkl": "IMOSS-mutate-randxKL",
+    "imoss-mutate-klxrand": "IMOSS-mutate-KLxrand",
+    "imoss-mutate-klxtpe": "IMOSS-mutate-KLxTPE",
+    "imoss-mutate-klxtpe-global": "IMOSS-mutate-KLxTPE-global",
+    "imoss-mutate-klxtpe-newarm": "IMOSS-mutate-KLxTPE-newarm",
+    "imoss-mutate-klxtpe-sampled": "IMOSS-mutate-KLxTPE-sampled",
+    "imoss-mutate-klxtpe-improve": "IMOSS-mutate-KLxTPE-improve",
+    "imoss-mutate-ucbxtpe-improve": "IMOSS-mutate-UCBxTPE-improve",
+    "imoss-mutate-klxkl": "IMOSS-mutate-KLxKL",
+    "imoss-mutate-klxkl-newarm": "IMOSS-mutate-KLxKL-newarm",
+    "imoss-mutate-tpe-kgeom": "IMOSS-mutate-TPE-kgeom",
+    "imoss-mutate-tpe-k2": "IMOSS-mutate-TPE-k2",
+    "imoss-mutate-tpe-newarm": "IMOSS-mutate-TPE-newarm",
+    "imoss-mutate-random": "IMOSS-mutate-random",
+    "imoss-hier-mab-newarm": "IMOSS-Hier-MAB-newarm",
+    "imoss-coorducb-tpe-newarm": "IMOSS-coordUCB-TPE-newarm",
+    "imoss-hier-mab-moss": "IMOSS-Hier-MAB-moss",
+    "imoss-hier-mab-lastprop": "IMOSS-Hier-MAB-lastprop",
+    "imoss-coorducb-tpe-moss": "IMOSS-coordUCB-TPE-moss",
+    "imoss-coorducb-tpe-lastprop": "IMOSS-coordUCB-TPE-lastprop",
+    "imoss-coorducb-tpe-contrib": "IMOSS-coordUCB-TPE-contrib",
+    "imoss-hier-mab-contrib": "IMOSS-Hier-MAB-contrib",
+    "imoss-hier-mab": "IMOSS-Hier-MAB",
+    "imoss-hier-mab-softmax": "IMOSS-Hier-MAB-softmax",
+    "imoss-hier-mab-mean": "IMOSS-Hier-MAB-mean",
+    "imoss-hier-mab-improve": "IMOSS-Hier-MAB-improve",
     "ucb-air": "UCB-AIR",
     "ucbair": "UCB-AIR",
     # Same method, two naming families (see the ALGORITHM_STYLES note):
@@ -163,6 +265,7 @@ _ALGORITHM_ALIASES = {
     "hier-ucb": "Hier-UCB",
     "hierucb": "Hier-UCB",
     "hier-mab": "Hier-MAB",
+    "hier-tpe": "Hier-TPE",
     "hiermab": "Hier-MAB",
     "autorag-hp": "Hier-MAB",
     "hier-mab-10": "Hier-MAB-10",
@@ -266,16 +369,27 @@ PAPER_LEGEND_FONTSIZE = 8
 
 
 def legend_ncol_for_columns(
-    n_labels: int, columns: int, max_single_row: int = 3
+    n_labels: int, columns: int, max_single_row: int = 3, max_per_row: int = 6
 ) -> int:
     """Legend column count for a paper_figure_width_in-sized figure: at
     columns=2 (a figure*) there's usually enough width for every entry on one
     row; at columns=1 there usually isn't, so entries beyond max_single_row
     wrap onto a second row instead of squeezing (and shrinking the rest of
     the figure to make room for) one very wide legend row.
+
+    ``max_per_row`` bounds that "usually" for columns=2: a legend row wider than
+    the figure cannot shrink, so ``bbox_inches="tight"`` grows the CANVAS
+    sideways to fit it and the panels end up as a small island in a very wide
+    page. Beyond ``max_per_row`` entries the legend wraps into as few rows as
+    keeps every row within that bound.
     """
-    if columns == 2 or n_labels <= max_single_row:
+    if n_labels <= max_single_row:
         return n_labels
+    if columns == 2:
+        if n_labels <= max_per_row:
+            return n_labels
+        rows = -(-n_labels // max_per_row)  # ceil: fewest rows within the bound
+        return -(-n_labels // rows)  # ceil: balanced row widths
     return -(-n_labels // 2)  # ceil(n_labels / 2) -> 2 rows
 
 
@@ -522,6 +636,7 @@ def confidence_ellipse(x, y, ax, n_std=1.0, facecolor="none", **kwargs):
 # deleted rf_tabular_bandit_plot.py, which these scripts imported from.
 _PRETTY_LABELS = {
     "imoss_tpe": "IMOSS-TPE",
+    "imoss_tpe_eps0.1": "IMOSS-TPE-eps0.1",
     "imoss_tpe_univ": "IMOSS-TPE-univ",
     "imoss": "IMOSS-Random",
     "imoss_random": "IMOSS-Random",
@@ -529,19 +644,94 @@ _PRETTY_LABELS = {
     "imoss_tabfm": "IMOSS-TabFM",
     "imoss_tabpfn": "IMOSS-TabPFN",
     "imoss_tabpfn_pull": "IMOSS-TabPFN-pull",
+    "imoss_tabpfn_coord": "IMOSS-TabPFN-coord",
+    "imoss_tabpfn_coord_softmax": "IMOSS-TabPFN-coord-softmax",
+    "imoss_tabpfn_coord_tpe": "IMOSS-TabPFN-coord-TPE",
+    "imoss_tabpfn_coord_tpe_sampled": "IMOSS-TabPFN-coord-TPE-sampled",
+    "imoss_tabpfn_coord_tpe_softmax": "IMOSS-TabPFN-coord-TPE-softmax",
+    "imoss_tabpfn_tpe": "IMOSS-TabPFN-TPE",
+    "imoss_coorducb_tpe": "IMOSS-coordUCB-TPE",
+    "imoss_coorducb_tpe_softmax": "IMOSS-coordUCB-TPE-softmax",
+    "imoss_coorducb_random": "IMOSS-coordUCB-random",
+    "imoss_mutate_tpe": "IMOSS-mutate-TPE",
+    "imoss_mutate_randxkl": "IMOSS-mutate-randxKL",
+    "imoss_mutate_klxrand": "IMOSS-mutate-KLxrand",
+    "imoss_mutate_klxtpe": "IMOSS-mutate-KLxTPE",
+    "imoss_mutate_klxtpe_global": "IMOSS-mutate-KLxTPE-global",
+    "imoss_mutate_klxtpe_newarm": "IMOSS-mutate-KLxTPE-newarm",
+    "imoss_mutate_klxtpe_sampled": "IMOSS-mutate-KLxTPE-sampled",
+    "imoss_mutate_klxtpe_improve": "IMOSS-mutate-KLxTPE-improve",
+    "imoss_mutate_ucbxtpe_improve": "IMOSS-mutate-UCBxTPE-improve",
+    "imoss_mutate_klxkl": "IMOSS-mutate-KLxKL",
+    "imoss_mutate_klxkl_newarm": "IMOSS-mutate-KLxKL-newarm",
+    "imoss_mutate_tpe_kgeom": "IMOSS-mutate-TPE-kgeom",
+    "imoss_mutate_tpe_k2": "IMOSS-mutate-TPE-k2",
+    "imoss_mutate_tpe_newarm": "IMOSS-mutate-TPE-newarm",
+    "imoss_mutate_random": "IMOSS-mutate-random",
+    "imoss_hier_mab_newarm": "IMOSS-Hier-MAB-newarm",
+    "imoss_coorducb_tpe_newarm": "IMOSS-coordUCB-TPE-newarm",
+    "imoss_hier_mab_moss": "IMOSS-Hier-MAB-moss",
+    "imoss_hier_mab_lastprop": "IMOSS-Hier-MAB-lastprop",
+    "imoss_coorducb_tpe_moss": "IMOSS-coordUCB-TPE-moss",
+    "imoss_coorducb_tpe_lastprop": "IMOSS-coordUCB-TPE-lastprop",
+    "imoss_coorducb_tpe_contrib": "IMOSS-coordUCB-TPE-contrib",
+    "imoss_hier_mab_contrib": "IMOSS-Hier-MAB-contrib",
+    "imoss_hier_mab": "IMOSS-Hier-MAB",
+    "imoss_hier_mab_softmax": "IMOSS-Hier-MAB-softmax",
+    "imoss_hier_mab_mean": "IMOSS-Hier-MAB-mean",
+    "imoss_hier_mab_improve": "IMOSS-Hier-MAB-improve",
     "ucb_air": "UCB-AIR",
     "hier_mab": "Hier-MAB",
+    "hier_tpe": "Hier-TPE",
 }
 
 _CANONICAL_ORDER = [
     "IMOSS-Random",
     "IMOSS-TPE",
+    "IMOSS-TPE-eps0.1",
     "IMOSS-TPE-univ",
     "IMOSS-TabFM",
     "IMOSS-TabPFN",
     "IMOSS-TabPFN-pull",
+    "IMOSS-TabPFN-coord",
+    "IMOSS-TabPFN-coord-softmax",
+    "IMOSS-TabPFN-coord-TPE",
+    "IMOSS-TabPFN-coord-TPE-sampled",
+    "IMOSS-TabPFN-coord-TPE-softmax",
+    "IMOSS-TabPFN-TPE",
+    "IMOSS-coordUCB-TPE",
+    "IMOSS-coordUCB-TPE-softmax",
+    "IMOSS-coordUCB-random",
+    "IMOSS-coordUCB-TPE-contrib",
+    "IMOSS-coordUCB-TPE-lastprop",
+    "IMOSS-coordUCB-TPE-moss",
+    "IMOSS-coordUCB-TPE-newarm",
+    "IMOSS-mutate-random",
+    "IMOSS-mutate-TPE",
+    "IMOSS-mutate-TPE-newarm",
+    "IMOSS-mutate-TPE-k2",
+    "IMOSS-mutate-TPE-kgeom",
+    "IMOSS-mutate-KLxKL",
+    "IMOSS-mutate-KLxKL-newarm",
+    "IMOSS-mutate-KLxTPE",
+    "IMOSS-mutate-KLxrand",
+    "IMOSS-mutate-randxKL",
+    "IMOSS-mutate-UCBxTPE-improve",
+    "IMOSS-mutate-KLxTPE-improve",
+    "IMOSS-mutate-KLxTPE-global",
+    "IMOSS-mutate-KLxTPE-sampled",
+    "IMOSS-mutate-KLxTPE-newarm",
+    "IMOSS-Hier-MAB",
+    "IMOSS-Hier-MAB-softmax",
+    "IMOSS-Hier-MAB-mean",
+    "IMOSS-Hier-MAB-improve",
+    "IMOSS-Hier-MAB-contrib",
+    "IMOSS-Hier-MAB-lastprop",
+    "IMOSS-Hier-MAB-moss",
+    "IMOSS-Hier-MAB-newarm",
     "UCB-AIR",
     "Hier-MAB",
+    "Hier-TPE",
 ]
 
 _BENCH_NAMES = {

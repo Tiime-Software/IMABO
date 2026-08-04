@@ -14,15 +14,16 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
+from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.utils.stats import (
     calculate_statistics,
     save_iterations_to_csv,
     save_results_to_csv,
 )
-from imabo import IMABO
+from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
+from imabo.tabpfn_optimizer import load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -42,6 +43,39 @@ class Algorithm(Enum):
     # Factored baseline (AutoRAG-HP) on an 11-point grid per axis
     # (linspace(lower, upper, 11) per coordinate via HierMAB.axis_values).
     HIER_MAB_11 = "Hier-MAB-11"
+    # Best surrogate-free explore oracle from the RF-tabular comparison: mutate
+    # the best arm so far on a coordinate chosen by a KL-UCB bandit, with the new
+    # value drawn by a univariate TPE. Unlike Hier-MAB it needs no axis grid --
+    # the TPE proposes on the real interval -- so nothing is discretised here.
+    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
+    # ... plus an extra bandit arm proposing a whole multivariate-TPE config, so
+    # the bandit decides how often to jump globally instead of hill-climbing.
+    IMOSS_MUTATE_KLXTPE_GLOBAL = "IMOSS-mutate-KLxTPE-global"
+    # ... and the two per-parent variants: one coordinate bandit PER PARENT
+    # rather than one for the run, at both confidence widths. The credit of
+    # mutating a coordinate is conditional on the arm being mutated, so these
+    # condition on it instead of pooling across incumbents. On the RF grid the
+    # KL one was a wash (+14 ± 23 over 30 seeds); these continuous landscapes
+    # have far more distinct incumbents, which is where it should either pay
+    # off or clearly fail.
+    IMOSS_MUTATE_KLXTPE_PERPARENT = "IMOSS-mutate-KLxTPE-perparent"
+    IMOSS_MUTATE_UCBXTPE_PERPARENT = "IMOSS-mutate-UCBxTPE-perparent"
+    # The TabPFN oracle at the settings tuned across the RF grid and the 2-D HPO
+    # boxes: a LOCAL mutation step (mutate_value resamples a continuous axis over
+    # its whole domain, which is not a neighbour), a refit at every explore step
+    # (the default 10 leaves ~89% of proposals coming off a stale shortlist), and
+    # a 0.841 acquisition quantile (0.99 rewards predictive variance, which on a
+    # wide continuous pool just picks the least familiar candidate). These toys
+    # are 4-D and continuous -- between the two regimes where those settings were
+    # tuned -- so they are the case most likely to break them.
+    IMOSS_TABPFN_TUNED = "IMOSS-TabPFN-tuned"
+    # The same at quantile 0.99. On the coordination-barrier landscapes 0.841
+    # was the whole failure: it took the uniform share of the pool from 12% of
+    # argmaxes to 0 of 183, and restoring 0.99 moved family_d2 by -313.8 +- 99.5.
+    # These toys are the remaining case that ran at 0.841 and lost.
+    IMOSS_TABPFN_TUNED_Q99 = "IMOSS-TabPFN-tuned-q0.99"
+    IMOSS_TABPFN_TUNED_Q90 = "IMOSS-TabPFN-tuned-q0.9"
+    IMOSS_TABPFN_TUNED_Q975 = "IMOSS-TabPFN-tuned-q0.975"
 
 
 class RegretData(TypedDict):
@@ -55,6 +89,16 @@ def _rescale_to_search_space(z: np.ndarray, search_space: dict) -> np.ndarray:
     bounds = np.array([[v["lower"], v["upper"]] for v in search_space.values()])
     lower, upper = bounds[:, 0], bounds[:, 1]
     return lower + (upper - lower) * np.asarray(z)
+
+
+_TABPFN_MODEL = None
+
+
+def _tabpfn_model():
+    global _TABPFN_MODEL
+    if _TABPFN_MODEL is None:
+        _TABPFN_MODEL = load_tabpfn()
+    return _TABPFN_MODEL
 
 
 def _build_optimizer(
@@ -82,6 +126,79 @@ def _build_optimizer(
         return TimedOptimizer(stroquool, n_iterations, dim), True
     if algo == Algorithm.HIER_MAB_11:
         return HierMAB(search_space, n_points=11, seed=seed), False
+    if algo == Algorithm.IMOSS_MUTATE_KLXTPE_GLOBAL:
+        return (
+            IMABOCoordUCB(
+                search_space=search_space,
+                seed=seed,
+                beta=beta,
+                parent_rule="best",
+                coord_rule="ucb",
+                value_rule="tpe",
+                credit_rule="arm_mean",
+                bandit_bonus="kl",
+                global_tpe_arm=True,
+            ),
+            False,
+        )
+    if algo in (Algorithm.IMOSS_TABPFN_TUNED, Algorithm.IMOSS_TABPFN_TUNED_Q99,
+                Algorithm.IMOSS_TABPFN_TUNED_Q90,
+                Algorithm.IMOSS_TABPFN_TUNED_Q975):
+        return (
+            IMABOTabPFN(
+                search_space=search_space,
+                seed=seed,
+                beta=beta,
+                candidate_source="mutation",
+                parent_rule="best",
+                candidate_uniform_frac=0.1,
+                mutation_scale=0.1,
+                refit_every=1,
+                quantile={
+                    Algorithm.IMOSS_TABPFN_TUNED_Q99: 0.99,
+                    Algorithm.IMOSS_TABPFN_TUNED_Q90: 0.9,
+                    Algorithm.IMOSS_TABPFN_TUNED_Q975: 0.975,
+                }.get(algo, 0.841),
+                tabpfn_model=_tabpfn_model(),
+            ),
+            False,
+        )
+    if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
+        return (
+            IMABOCoordUCB(
+                search_space=search_space,
+                seed=seed,
+                beta=beta,
+                parent_rule="best",
+                coord_rule="ucb",
+                value_rule="tpe",
+                credit_rule="arm_mean",
+                bandit_bonus="kl",
+            ),
+            False,
+        )
+    if algo in (
+        Algorithm.IMOSS_MUTATE_KLXTPE_PERPARENT,
+        Algorithm.IMOSS_MUTATE_UCBXTPE_PERPARENT,
+    ):
+        return (
+            IMABOCoordUCB(
+                search_space=search_space,
+                seed=seed,
+                beta=beta,
+                parent_rule="best",
+                coord_rule="ucb",
+                value_rule="tpe",
+                credit_rule="arm_mean",
+                bandit_bonus=(
+                    "kl"
+                    if algo is Algorithm.IMOSS_MUTATE_KLXTPE_PERPARENT
+                    else "hoeffding"
+                ),
+                coord_bandit_scope="parent",
+            ),
+            False,
+        )
     raise ValueError(f"unknown algorithm: {algo!r}")
 
 
