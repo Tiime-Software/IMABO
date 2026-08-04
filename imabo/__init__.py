@@ -15,6 +15,7 @@ from imabo.moss import (
     ucb,
     ucb_siri,
 )
+from imabo.coord_ucb import IMABOCoordUCB
 from imabo.optimizer import IMABO, FiniteIMABO, IMABOTabFM
 from imabo.tabpfn_optimizer import IMABOTabPFN
 from imabo.tpe import default_gamma, default_weights, hyperopt_default_gamma
@@ -23,6 +24,7 @@ from imabo.types import ArmConfig, ArmKey
 __all__ = [
     # Optimizers
     "IMABO",
+    "IMABOCoordUCB",
     "FiniteIMABO",
     "IMABOTabFM",
     "IMABOTabPFN",

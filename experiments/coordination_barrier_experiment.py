@@ -210,6 +210,9 @@ IMOSS_METHODS = {
     "imoss_random": "IMOSS-Random",
     "imoss_tpe": "IMOSS-TPE",
     "imoss_tabpfn": "IMOSS-TabPFN",
+    # The two tuned explore oracles -- see winning_configs.pdf.
+    "imoss_mutate_klxtpe": "IMOSS-mutate-KLxTPE",
+    "imoss_tabpfn_tuned": "IMOSS-TabPFN-tuned",
 }
 # "imoss_tpe_uni" (IMABO with multivariate=False: independent per-coordinate
 # Parzen estimators, a factored proposal) stays available in _build for
@@ -259,6 +262,23 @@ def _build(land: Landscape, slug: str, n_iterations: int, seed: int, tabpfn_mode
         return (
             IMABO(
                 search_space=land.search_space, seed=seed, multivariate=False, beta=BETA
+            ),
+            False,
+        )
+    if slug == "imoss_mutate_klxtpe":
+        from imabo import IMABOCoordUCB
+
+        return (
+            IMABOCoordUCB(search_space=land.search_space, seed=seed, beta=BETA),
+            False,
+        )
+    if slug == "imoss_tabpfn_tuned":
+        from imabo.tabpfn_optimizer import IMABOTabPFN
+
+        return (
+            IMABOTabPFN(
+                search_space=land.search_space, seed=seed,
+                tabpfn_model=tabpfn_model, beta=BETA, n_estimators=4,
             ),
             False,
         )

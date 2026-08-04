@@ -209,3 +209,88 @@ def tpe_suggest(
     ei_scores = log_l - log_g
     best_idx = int(np.argmax(ei_scores))
     return candidates[best_idx]
+
+
+def _as_python(value):
+    """Numpy scalar -> plain Python scalar, other values untouched.
+
+    Optuna's ``to_external_repr`` hands back ``np.float64`` for float
+    parameters. Proposed configs end up in JSON checkpoints written by the
+    experiment scripts, and ``json.dump`` cannot serialize numpy scalars, so the
+    proposal helpers below hand out plain Python numbers.
+    """
+    return value.item() if isinstance(value, np.generic) else value
+
+
+def univariate_tpe_sampler(
+    good_configs: list[ArmConfig],
+    bad_configs: list[ArmConfig],
+    name: str,
+    distribution: BaseDistribution,
+    prior_weight: float = 1.0,
+    weights_func: Callable = default_weights,
+) -> Callable[[int, np.random.RandomState], list]:
+    """Fit the 1-D Parzen pair for ``name`` once; return a re-usable sampler.
+
+    The returned callable takes ``(n_candidates, rng)`` and gives that many FRESH
+    draws from ``l``, EI-ranked -- so two calls return different candidate values
+    from the same fitted densities. That split matters for a caller that needs
+    many independent values from one coordinate (a mutation pool): the fit is the
+    expensive part and is paid once, while reusing a single ranked *list* would
+    hand every candidate the same top-ranked value.
+    """
+    parzen_params = _ParzenEstimatorParameters(
+        prior_weight=prior_weight,
+        consider_magic_clip=True,
+        consider_endpoints=True,
+        weights=weights_func,
+        multivariate=False,
+        categorical_distance_func={},
+    )
+    search_space = {name: distribution}
+    parzen_l = _ParzenEstimator(
+        observations=configs_to_optuna(good_configs, [name], search_space),
+        search_space=search_space,
+        parameters=parzen_params,
+    )
+    parzen_g = _ParzenEstimator(
+        observations=configs_to_optuna(bad_configs, [name], search_space),
+        search_space=search_space,
+        parameters=parzen_params,
+    )
+
+    def draw(n_candidates: int, rng: np.random.RandomState) -> list:
+        samples = parzen_l.sample(rng, n_candidates)
+        ei = parzen_l.log_pdf(samples) - parzen_g.log_pdf(samples)
+        order = np.argsort(ei)[::-1]
+        return [
+            _as_python(distribution.to_external_repr(samples[name][i])) for i in order
+        ]
+
+    return draw
+
+
+def univariate_tpe_values(
+    good_configs: list[ArmConfig],
+    bad_configs: list[ArmConfig],
+    name: str,
+    distribution: BaseDistribution,
+    n_candidates: int,
+    rng: np.random.RandomState,
+    prior_weight: float = 1.0,
+    weights_func: Callable = default_weights,
+) -> list:
+    """EI-ranked candidate values for ONE parameter (classical univariate TPE).
+
+    The single-coordinate counterpart of :func:`tpe_suggest`: fit the 1-D Parzen
+    pair ``l``/``g`` for ``name`` alone over the good/bad arms, sample
+    ``n_candidates`` values from ``l``, and return them in the parameter's
+    external representation, sorted by descending ``log l(x) - log g(x)``. The
+    caller picks -- ``[0]`` reproduces what univariate ``tpe_suggest`` would
+    choose for this coordinate, while the rest of the ranking lets a caller skip
+    a value it must not return (e.g. a mutation operator rejecting the parent's
+    current value).
+    """
+    return univariate_tpe_sampler(
+        good_configs, bad_configs, name, distribution, prior_weight, weights_func
+    )(n_candidates, rng)

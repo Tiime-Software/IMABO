@@ -22,7 +22,8 @@ from experiments.utils.stats import (
     save_iterations_to_csv,
     save_results_to_csv,
 )
-from imabo import IMABO
+from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
+from imabo.tabpfn_optimizer import load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -42,6 +43,9 @@ class Algorithm(Enum):
     # Factored baseline (AutoRAG-HP) on an 11-point grid per axis
     # (linspace(lower, upper, 11) per coordinate via HierMAB.axis_values).
     HIER_MAB_11 = "Hier-MAB-11"
+    # The two tuned explore oracles -- see winning_configs.pdf.
+    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
+    IMOSS_TABPFN_TUNED = "IMOSS-TabPFN-tuned"
 
 
 class RegretData(TypedDict):
@@ -55,6 +59,16 @@ def _rescale_to_search_space(z: np.ndarray, search_space: dict) -> np.ndarray:
     bounds = np.array([[v["lower"], v["upper"]] for v in search_space.values()])
     lower, upper = bounds[:, 0], bounds[:, 1]
     return lower + (upper - lower) * np.asarray(z)
+
+
+_TABPFN_MODEL = None
+
+
+def _tabpfn_model():
+    global _TABPFN_MODEL
+    if _TABPFN_MODEL is None:
+        _TABPFN_MODEL = load_tabpfn()
+    return _TABPFN_MODEL
 
 
 def _build_optimizer(
@@ -79,6 +93,18 @@ def _build_optimizer(
         return TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0), True
     if algo == Algorithm.STROQUOOL:
         return TimedOptimizer(stroquool, n_iterations, dim), True
+    if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
+        return IMABOCoordUCB(search_space=search_space, seed=seed, beta=beta), False
+    if algo == Algorithm.IMOSS_TABPFN_TUNED:
+        return (
+            IMABOTabPFN(
+                search_space=search_space,
+                seed=seed,
+                beta=beta,
+                tabpfn_model=_tabpfn_model(),
+            ),
+            False,
+        )
     if algo == Algorithm.HIER_MAB_11:
         return HierMAB(search_space, n_points=11, seed=seed), False
     raise ValueError(f"unknown algorithm: {algo!r}")
