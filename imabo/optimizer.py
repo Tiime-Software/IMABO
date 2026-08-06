@@ -68,6 +68,7 @@ class IMABO:
         use_tpe: bool = True,
         memory: Memory | None = None,
         tpe_split_bound: Literal["moss", "lcb"] = "moss",
+        categorical_distance_func: dict[str, Callable[[Any, Any], float]] | None = None,
     ):
         """Initialize the IMABO optimizer.
 
@@ -91,6 +92,17 @@ class IMABO:
             tpe_split_bound: Index used to rank arms in :meth:`tpe_split`,
                 "moss" (default, MOSS-anytime UCB) or "lcb" (classic UCB1-style
                 lower confidence bound, an alternative pessimistic ranking).
+            categorical_distance_func: Per-parameter distance function for the
+                TPE Parzen estimator's categorical parameters (forwarded to
+                :func:`imabo.tpe.tpe_suggest`). ``None`` (default) derives it
+                automatically from the search space -- see
+                :func:`imabo.tpe.adaptive_categorical_distance_func` -- giving
+                an absolute-difference distance to every categorical parameter
+                whose choices are all numeric (e.g. a discretized
+                max_depth/max_features grid represented as "choices"), and
+                Optuna's plain one-hot treatment to the rest. Pass ``{}`` to
+                force one-hot for every categorical parameter, or a custom
+                dict to override specific parameters.
         """
         self.search_space_specs = search_space
         self.param_names = list(sorted(search_space.keys()))
@@ -117,6 +129,7 @@ class IMABO:
         self.multivariate = multivariate
         self.use_tpe = use_tpe
         self.tpe_split_bound = tpe_split_bound
+        self.categorical_distance_func = categorical_distance_func
 
         self.last_suggested: ArmConfig | None = None
 
@@ -333,6 +346,7 @@ class IMABO:
             prior_weight=self.prior_weight,
             multivariate=self.multivariate,
             weights_func=self.weights_func,
+            categorical_distance_func=self.categorical_distance_func,
         )
 
         if candidate is None:

@@ -175,6 +175,14 @@ class LCBenchMixedBenchmark:
         space: dict[str, dict] = {}
         for hp in opt_space.get_hyperparameters():
             name = hp.name
+            if name == self._fidelity_name:
+                # yahpo's lcbench opt space includes the fidelity (epoch) as a
+                # tunable, but _to_full_config pins it to max fidelity AFTER
+                # applying the optimizer's values -- so as a search axis it is
+                # DEAD: zero effect on reward or runtime (measured eta^2 = 0.000
+                # over 20k surrogate samples). Exposing it would make every
+                # optimizer spend exploration budget on a no-op coordinate.
+                continue
             if isinstance(hp, csh.CategoricalHyperparameter):
                 space[name] = {"choices": list(hp.choices)}
             elif isinstance(hp, csh.OrdinalHyperparameter):

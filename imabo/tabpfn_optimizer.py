@@ -256,18 +256,24 @@ class IMABOTabPFN(IMABO):
         self.fit_granularity = fit_granularity
         # Default the TabPFN fit_mode per granularity: KV cache pays off only
         # for the big per-pull table; leave arm-mode on TabPFN's own default.
-        self.fit_mode = fit_mode if fit_mode is not None else (
-            "fit_with_cache" if fit_granularity == "pull" else None
+        self.fit_mode = (
+            fit_mode
+            if fit_mode is not None
+            else ("fit_with_cache" if fit_granularity == "pull" else None)
         )
         # Per-arm list of individual pull rewards, populated by observe() only
         # when fit_granularity == "pull". Keyed exactly like the memory
         # (config_to_key) so _fit_surrogate can join it to rewarded_arms.
         self._pull_rewards: dict[ArmKey, list[float]] = {}
 
-        cfg = tabpfn_model if tabpfn_model is not None else {
-            "model_path": model_path,
-            "device": device,
-        }
+        cfg = (
+            tabpfn_model
+            if tabpfn_model is not None
+            else {
+                "model_path": model_path,
+                "device": device,
+            }
+        )
         self._model_path = cfg.get("model_path", model_path)
         self._device = cfg.get("device", device)
         # Kept as a named attribute so the experiment's `_shadow_copy`

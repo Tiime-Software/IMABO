@@ -1,7 +1,7 @@
 """TPE (Tree-structured Parzen Estimator) oracle for IMABO."""
 
 import math
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 from optuna.distributions import (
@@ -16,6 +16,8 @@ from optuna.samplers._tpe.parzen_estimator import (
 )
 
 from imabo.types import ArmConfig, OptunaConfigs
+
+CategoricalDistanceFunc = Callable[[Any, Any], float]
 
 
 def default_gamma(x: int) -> int:
@@ -38,6 +40,52 @@ def default_weights(x: int) -> np.ndarray:
         ramp = np.linspace(1.0 / x, 1.0, num=x - 25)
         flat = np.ones(25)
         return np.concatenate([ramp, flat], axis=0)
+
+
+def numeric_l1_distance(a: float, b: float) -> float:
+    """Absolute difference -- the natural distance for a categorical parameter
+    whose choices are actually ordered numbers (e.g. a discretized max_depth
+    grid represented as a ``CategoricalDistribution``, see
+    ``RFTabularFiniteBenchmark.get_search_space``). Suggested default distance
+    function for numeric-valued categorical arms; see
+    :func:`adaptive_categorical_distance_func`.
+    """
+    return abs(a - b)
+
+
+def adaptive_categorical_distance_func(
+    distributions: dict[str, BaseDistribution],
+) -> dict[str, CategoricalDistanceFunc]:
+    """Auto-derive a ``categorical_distance_func`` dict from the search space.
+
+    Optuna's Parzen estimator treats every categorical parameter as unordered
+    by default -- a hard one-hot kernel that puts weight only on the exact
+    observed choice (see ``_calculate_categorical_distributions`` in
+    ``optuna.samplers._tpe.parzen_estimator``). That is the wrong prior
+    whenever the "choices" are actually ordered numbers, which is common in
+    this project: finite-arm benchmarks coarsen a numeric hyperparameter grid
+    into ``CategoricalDistribution`` choices purely because the arm set is
+    finite and precomputed (see ``RFTabularFiniteBenchmark.get_search_space``,
+    whose ``max_depth``/``max_features``/``min_samples_leaf``/
+    ``min_samples_split`` are all numeric "choices"). For those, a choice close
+    to a good/bad observation should borrow some of its density instead of
+    being treated as unrelated as one at the opposite end of the range.
+
+    Picks up every categorical parameter whose choices are all real numbers
+    (``bool`` excluded -- True/False have no ordering) and assigns it
+    :func:`numeric_l1_distance`; string/mixed-type categoricals are left out of
+    the dict, which keeps Optuna's one-hot default for them.
+    """
+    return {
+        name: numeric_l1_distance
+        for name, dist in distributions.items()
+        if isinstance(dist, CategoricalDistribution)
+        and dist.choices
+        and all(
+            isinstance(c, (int, float)) and not isinstance(c, bool)
+            for c in dist.choices
+        )
+    }
 
 
 def create_search_space(
@@ -117,6 +165,7 @@ def tpe_suggest(
     prior_weight: float = 1.0,
     multivariate: bool = True,
     weights_func: Callable = default_weights,
+    categorical_distance_func: dict[str, CategoricalDistanceFunc] | None = None,
 ) -> ArmConfig | None:
     """Suggest a new configuration using the TPE oracle.
 
@@ -141,6 +190,14 @@ def tpe_suggest(
             numerical bandwidth heuristic and does NOT factor the mixture --
             on an all-categorical space it changed nothing at all.)
         weights_func: Function to compute observation weights.
+        categorical_distance_func: Per-parameter distance function fed to the
+            Parzen estimator for categorical parameters (see
+            :func:`adaptive_categorical_distance_func`). ``None`` (default)
+            derives it automatically from ``distributions`` -- an
+            absolute-difference distance for every categorical whose choices
+            are all numeric, Optuna's plain one-hot treatment for the rest.
+            Pass ``{}`` to force one-hot for every categorical parameter, or a
+            custom dict to override specific parameters.
 
     Returns:
         Best candidate configuration, or None if sampling fails.
@@ -148,13 +205,16 @@ def tpe_suggest(
     good_obs = configs_to_optuna(good_configs, param_names, distributions)
     bad_obs = configs_to_optuna(bad_configs, param_names, distributions)
 
+    if categorical_distance_func is None:
+        categorical_distance_func = adaptive_categorical_distance_func(distributions)
+
     parzen_params = _ParzenEstimatorParameters(
         prior_weight=prior_weight,
         consider_magic_clip=True,
         consider_endpoints=True,
         weights=weights_func,
         multivariate=multivariate,
-        categorical_distance_func={},
+        categorical_distance_func=categorical_distance_func,
     )
 
     if multivariate:
@@ -229,6 +289,7 @@ def univariate_tpe_sampler(
     distribution: BaseDistribution,
     prior_weight: float = 1.0,
     weights_func: Callable = default_weights,
+    categorical_distance_func: dict[str, CategoricalDistanceFunc] | None = None,
 ) -> Callable[[int, np.random.RandomState], list]:
     """Fit the 1-D Parzen pair for ``name`` once; return a re-usable sampler.
 
@@ -238,16 +299,22 @@ def univariate_tpe_sampler(
     many independent values from one coordinate (a mutation pool): the fit is the
     expensive part and is paid once, while reusing a single ranked *list* would
     hand every candidate the same top-ranked value.
+
+    ``categorical_distance_func``: see :func:`tpe_suggest`. ``None`` (default)
+    derives it for ``name`` alone via :func:`adaptive_categorical_distance_func`.
     """
+    search_space = {name: distribution}
+    if categorical_distance_func is None:
+        categorical_distance_func = adaptive_categorical_distance_func(search_space)
+
     parzen_params = _ParzenEstimatorParameters(
         prior_weight=prior_weight,
         consider_magic_clip=True,
         consider_endpoints=True,
         weights=weights_func,
         multivariate=False,
-        categorical_distance_func={},
+        categorical_distance_func=categorical_distance_func,
     )
-    search_space = {name: distribution}
     parzen_l = _ParzenEstimator(
         observations=configs_to_optuna(good_configs, [name], search_space),
         search_space=search_space,
@@ -279,6 +346,7 @@ def univariate_tpe_values(
     rng: np.random.RandomState,
     prior_weight: float = 1.0,
     weights_func: Callable = default_weights,
+    categorical_distance_func: dict[str, CategoricalDistanceFunc] | None = None,
 ) -> list:
     """EI-ranked candidate values for ONE parameter (classical univariate TPE).
 
@@ -290,7 +358,15 @@ def univariate_tpe_values(
     choose for this coordinate, while the rest of the ranking lets a caller skip
     a value it must not return (e.g. a mutation operator rejecting the parent's
     current value).
+
+    ``categorical_distance_func``: see :func:`tpe_suggest`.
     """
     return univariate_tpe_sampler(
-        good_configs, bad_configs, name, distribution, prior_weight, weights_func
+        good_configs,
+        bad_configs,
+        name,
+        distribution,
+        prior_weight,
+        weights_func,
+        categorical_distance_func,
     )(n_candidates, rng)

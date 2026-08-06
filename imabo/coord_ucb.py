@@ -101,6 +101,7 @@ class IMABOCoordUCB(IMABO):
         gamma_func: Callable[[int], int] | None = None,
         weights_func: Callable[[int], np.ndarray] | None = None,
         min_arms_for_mutation: int = 10,
+        categorical_distance_func: dict[str, Callable[[Any, Any], float]] | None = None,
     ):
         """Initialize IMABOCoordUCB.
 
@@ -111,6 +112,10 @@ class IMABOCoordUCB(IMABO):
                 arm is meaningless.
             n_ei_candidates: Values drawn from ``l`` per coordinate, ranked by
                 ``l/g``; the best is proposed.
+            categorical_distance_func: See :class:`imabo.optimizer.IMABO`. Fed
+                to the univariate TPE that picks the mutated coordinate's new
+                value (:func:`imabo.tpe.univariate_tpe_values`); ``None``
+                (default) auto-derives it from the search space.
 
         The remaining arguments are IMABO's own. ``beta`` defaults to 0.5 here
         rather than IMABO's 0.8: measured across every oracle tried, 0.8 is much
@@ -132,6 +137,7 @@ class IMABOCoordUCB(IMABO):
             # The oracle proposes; IMABO must not fall back to its own TPE.
             use_tpe=True,
             memory=memory,
+            categorical_distance_func=categorical_distance_func,
         )
         self.min_arms_for_mutation = min_arms_for_mutation
         self.coord_bandit = KLUCB1(len(self.param_names))
@@ -217,6 +223,7 @@ class IMABOCoordUCB(IMABO):
             rng=np.random.RandomState(self.rng.randint(0, 2**32 - 1)),
             prior_weight=self.prior_weight,
             weights_func=self.weights_func,
+            categorical_distance_func=self.categorical_distance_func,
         )
         for value in ranked:
             if value == current:

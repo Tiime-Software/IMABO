@@ -18,7 +18,13 @@ from imabo.moss import (
 from imabo.coord_ucb import IMABOCoordUCB
 from imabo.optimizer import IMABO, FiniteIMABO, IMABOTabFM
 from imabo.tabpfn_optimizer import IMABOTabPFN
-from imabo.tpe import default_gamma, default_weights, hyperopt_default_gamma
+from imabo.tpe import (
+    adaptive_categorical_distance_func,
+    default_gamma,
+    default_weights,
+    hyperopt_default_gamma,
+    numeric_l1_distance,
+)
 from imabo.types import ArmConfig, ArmKey
 
 __all__ = [
@@ -45,6 +51,8 @@ __all__ = [
     "default_gamma",
     "hyperopt_default_gamma",
     "default_weights",
+    "adaptive_categorical_distance_func",
+    "numeric_l1_distance",
     # Types
     "ArmKey",
     "ArmConfig",

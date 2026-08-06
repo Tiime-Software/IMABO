@@ -101,7 +101,16 @@ ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     "IMOSS-TabPFN": (_PALETTE_GREEN, "s"),  # rf (TabPFN comparison)
     # Per-pull TabPFN variant (fit on individual pulls, not per-arm means).
     "IMOSS-TabPFN-pull": (_PALETTE_GREEN, "X"),  # rf (TabPFN per-pull comparison)
+    # Tuned-config TabPFN variant (see winning_configs.pdf); co-occurs with
+    # plain "IMOSS-TabPFN"/"-pull" in the RF regret+oracle figure, so it stays
+    # in the same green family but needs its own marker.
+    "IMOSS-TabPFN-tuned": (_PALETTE_GREEN, "P"),  # rf (TabPFN tuned-config comparison)
     "UCB-AIR": (_PALETTE_VERMILLION, "D"),  # rf, hotpotqa
+    # Tuned mutate-the-incumbent oracle: a KL-UCB coordinate bandit picking
+    # which parameter to change, a univariate TPE picking its new value (see
+    # winning_configs.pdf). Co-occurs with Hier-MAB (purple) in the RF figure,
+    # so it takes the one Wong color otherwise unused there (sky).
+    "IMOSS-mutate-KLxTPE": (_PALETTE_SKY, "v"),  # rf (regret + oracle comparison)
     # hier_compare only; never co-occurs with IMOSS-Random, so blue is free.
     # The alpha ablation is the same method, so it keeps the colour and is
     # separated by marker (+ a dashed line in hier_compare's plot).
@@ -529,6 +538,8 @@ _PRETTY_LABELS = {
     "imoss_tabfm": "IMOSS-TabFM",
     "imoss_tabpfn": "IMOSS-TabPFN",
     "imoss_tabpfn_pull": "IMOSS-TabPFN-pull",
+    "imoss_tabpfn_tuned": "IMOSS-TabPFN-tuned",
+    "imoss_mutate_klxtpe": "IMOSS-mutate-KLxTPE",
     "ucb_air": "UCB-AIR",
     "hier_mab": "Hier-MAB",
 }
@@ -537,9 +548,11 @@ _CANONICAL_ORDER = [
     "IMOSS-Random",
     "IMOSS-TPE",
     "IMOSS-TPE-univ",
+    "IMOSS-mutate-KLxTPE",
     "IMOSS-TabFM",
     "IMOSS-TabPFN",
     "IMOSS-TabPFN-pull",
+    "IMOSS-TabPFN-tuned",
     "UCB-AIR",
     "Hier-MAB",
 ]

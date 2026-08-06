@@ -489,9 +489,7 @@ def run_single_experiment(
         "tabfm_candidate_probe_iterations": (
             tabfm_candidate_probe_iterations if is_surrogate else None
         ),
-        "tabfm_candidate_configs": (
-            tabfm_candidate_configs if is_surrogate else None
-        ),
+        "tabfm_candidate_configs": (tabfm_candidate_configs if is_surrogate else None),
         "tabfm_candidate_predicted_rewards": (
             tabfm_candidate_predicted_rewards if is_surrogate else None
         ),
@@ -678,7 +676,7 @@ def make_plots(
         plot_regret_and_oracle_grid,
     )
     from experiments.utils.plots.rf_landscape_plot import (
-        plot_landscape_structure_grid,
+        plot_landscape_heatmap_grid,
     )
 
     is_tabpfn = foundation == "tabpfn"
@@ -686,9 +684,7 @@ def make_plots(
     fm_label = (
         "IMOSS-TabPFN-pull"
         if is_pull
-        else "IMOSS-TabPFN"
-        if is_tabpfn
-        else "IMOSS-TabFM"
+        else "IMOSS-TabPFN" if is_tabpfn else "IMOSS-TabFM"
     )
     suffix = "_pull" if is_pull else ""
     if is_tabpfn and acquisition == "ucb":
@@ -712,11 +708,21 @@ def make_plots(
     # (same directory, filename scheme, and seed pairing); it has no proposal
     # oracle, so like UCB-AIR it appears only in the regret row. IMOSS-TPE-univ
     # (multivariate=False) has stored runs but is not part of the paper figure.
-    regret_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label, "UCB-AIR", "Hier-MAB"]
-    oracle_algos = ["IMOSS-Random", "IMOSS-TPE", fm_label]
+    regret_algos = [
+        "IMOSS-Random",
+        "IMOSS-TPE",
+        fm_label,
+        "UCB-AIR",
+        "Hier-MAB",
+    ]
+    oracle_algos = [
+        "IMOSS-Random",
+        "IMOSS-TPE",
+        fm_label,
+    ]
 
     print("Generating RF reward-landscape structure grid (benchmark-only)...")
-    plot_landscape_structure_grid(
+    plot_landscape_heatmap_grid(
         bm_ids=tuple(int(tag.removeprefix("rf")) for tag in benchmarks),
         save_fig=save_fig,
     )
@@ -754,7 +760,9 @@ def _parse_args() -> argparse.Namespace:
         choices=["all"] + [a.value for a in Algorithm],
         help="method to run (default: 'all' -- every algorithm x benchmark)",
     )
-    p.add_argument("--n-runs", type=int, default=10, help="independent seeds per algorithm")
+    p.add_argument(
+        "--n-runs", type=int, default=10, help="independent seeds per algorithm"
+    )
     p.add_argument("--n-iter", type=int, default=5000, help="iterations (T) per run")
     p.add_argument("--base-seed", type=int, default=42)
     p.add_argument("--n-jobs", type=int, default=N_JOBS, help="parallel run workers")
