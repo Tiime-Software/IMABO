@@ -25,6 +25,7 @@ ALGO_DISPLAY_NAMES = {
     "IMABO-noTPE": "IMOSS",
     "IMOSS-TABFM": "IMOSS-TabFM",
     "IMOSS-TABPFN": "IMOSS-TabPFN",
+    "IMOSS-TABPFN-untuned": "IMOSS-TabPFN (untuned)",
     "UCB-AIR": "UCB-AIR",
 }
 

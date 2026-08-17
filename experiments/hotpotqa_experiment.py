@@ -7,13 +7,25 @@ runs are checkpointed and resumable, so reruns skip finished seeds.
 Reproduce the figure (each command is resumable; the three baselines are
 model-agnostic and shared by the TabFM and TabPFN figures):
 
-    python -m experiments.hotpotqa_experiment --algorithm IMABO       # IMOSS-TPE
+    python -m experiments.hotpotqa_experiment --algorithm IMOSS-TPE
     python -m experiments.hotpotqa_experiment --algorithm UCB-AIR
     python -m experiments.hotpotqa_experiment --algorithm Random
     python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN  # or IMOSS-TABFM
 
     # then draw the figure (uses --algorithm as the foundation-model series):
     python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN --plot-only
+
+``IMOSS-TABPFN`` is the tuned TabPFN oracle specified by winning_configs.pdf
+(the IMABOTabPFN class defaults: mutation candidate pool, refit_every=1,
+quantile 0.975). Two more oracle arms run the same way:
+
+    # the tuned surrogate-free oracle: KL-UCB coordinate bandit + univariate TPE
+    python -m experiments.hotpotqa_experiment --algorithm IMOSS-mutate-KLxTPE
+    # the previous TabPFN configuration, kept for reference/comparison
+    python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN-untuned
+
+Each arm has its own label (see :func:`algo_label`), so its result JSONs, CSVs
+and per-seed checkpoints never overwrite another arm's.
 
 Requires an ``OPENROUTER_API_KEY`` (in a ``.env`` file or the environment) for
 the LLM calls, and the TabPFN extra for the ``IMOSS-TABPFN`` arm
@@ -55,7 +67,7 @@ from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.hotpotqa.benchmark import HotpotQABenchmark
 from experiments.benchmarks.hotpotqa.types import Result
-from imabo import IMABO, IMABOTabFM, IMABOTabPFN
+from imabo import IMABO, IMABOCoordUCB, IMABOTabFM, IMABOTabPFN
 from imabo.optimizer import load_tabfm
 from imabo.tabpfn_optimizer import load_tabpfn
 
@@ -71,14 +83,81 @@ BETA = 0.5
 
 
 class Algorithm(Enum):
-    IMABO = "IMABO"  # full method: TPE explore + MOSS exploit
+    # Named as in the paper (and in rf_arm_distribution_experiment); the IMABO
+    # class behind them keeps its own name. Runs made before the rename are
+    # labelled "IMABO"/"IMABO-noTPE" on disk.
+    IMOSS_TPE = "IMOSS-TPE"  # full method: TPE explore + MOSS exploit
     RANDOM = "Random"  # true uniform random search (RandomSearch)
-    NO_TPE = "IMABO-noTPE"  # ablation: MOSS-only (IMABO with use_tpe=False)
+    IMOSS_RANDOM = "IMOSS-Random"  # ablation: MOSS-only (IMABO with use_tpe=False)
     OPTUNA = "Optuna"  # sequential TPE with k-observation averaging
     UCB_AIR = "UCB-AIR"  # infinitely-many-armed bandit, arm-increasing rule + UCBV
     IMOSS_TABFM = "IMOSS-TABFM"  # IMOSS-TABFM
-    IMOSS_TABPFN = "IMOSS-TABPFN"  # IMOSS with a TabPFN-3 explore oracle
+    # IMOSS with a TabPFN-3 explore oracle, in the tuned configuration
+    # winning_configs.pdf specifies (which is what IMABOTabPFN now defaults to):
+    # a mutation candidate pool with a local Gaussian step, refit_every=1 and
+    # the 0.975 quantile.
+    IMOSS_TABPFN = "IMOSS-TABPFN"
+    # The previous (untuned) TabPFN configuration -- uniform candidate pool,
+    # refit_every=10, quantile 0.99 -- kept as a reference arm. It has its own
+    # label, so its result/checkpoint files never collide with the tuned arm's.
+    IMOSS_TABPFN_UNTUNED = "IMOSS-TABPFN-untuned"
+    # Surrogate-free tuned oracle (see winning_configs.pdf): mutate the
+    # incumbent on a coordinate chosen by a KL-UCB bandit, the new value drawn
+    # by a univariate TPE.
+    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
     HIER_MAB = "Hier-MAB"  # AutoRAG-HP's factored two-level hierarchical MAB
+
+
+# Arms backed by TabPFN. The checkpoint must be warmed ONCE up front: loaded
+# lazily instead, worker threads race to load it and the process hard-crashes on
+# Apple-silicon MPS with no traceback (see imabo.tabpfn_optimizer).
+_TABPFN_ALGORITHMS = (Algorithm.IMOSS_TABPFN, Algorithm.IMOSS_TABPFN_UNTUNED)
+
+# Per-arm (acquisition, quantile) defaults: the tuned arm inherits IMABOTabPFN's
+# class defaults, the reference arm stays pinned to the old 0.99 quantile. The
+# CLI's --acquisition/--quantile override these; :func:`algo_label` then tags the
+# filenames so an override never overwrites the default run's results.
+_TABPFN_DEFAULTS = {
+    Algorithm.IMOSS_TABPFN: ("quantile", 0.975),
+    Algorithm.IMOSS_TABPFN_UNTUNED: ("quantile", 0.99),
+}
+
+
+def tabpfn_settings(
+    algorithm: Algorithm,
+    acquisition: str | None,
+    quantile: float | None,
+) -> tuple[str, float]:
+    """Resolve ``(acquisition, quantile)`` for a TabPFN arm, ``None`` meaning
+    "keep this arm's default"."""
+    default_acquisition, default_quantile = _TABPFN_DEFAULTS[algorithm]
+    return (
+        default_acquisition if acquisition is None else acquisition,
+        default_quantile if quantile is None else quantile,
+    )
+
+
+def tabpfn_suffix(
+    algorithm: Algorithm,
+    acquisition: str | None,
+    quantile: float | None,
+) -> str:
+    """Filename tag for a non-default TabPFN acquisition, ``""`` for the arm's
+    own default (and for every non-TabPFN arm).
+
+    Keeps an ``--acquisition``/``--quantile`` sweep in its own result files
+    instead of overwriting the default run's: ``_q<q>`` for the quantile rule at
+    another level, ``_ucb_q<q>`` for the moment UCB at the normality-equivalent
+    kappa.
+    """
+    if algorithm not in _TABPFN_ALGORITHMS:
+        return ""
+    acq, q = tabpfn_settings(algorithm, acquisition, quantile)
+    if acq == "ucb":
+        return f"_ucb_q{q:g}"
+    if (acq, q) != _TABPFN_DEFAULTS[algorithm]:
+        return f"_q{q:g}"
+    return ""
 
 
 def build_optimizer(
@@ -88,23 +167,24 @@ def build_optimizer(
     beta: float = 0.8,
     tabfm_model: Any = None,
     tabpfn_model: Any = None,
-    acquisition: str = "quantile",
-    quantile: float = 0.99,
+    acquisition: str | None = None,
+    quantile: float | None = None,
 ):
     """Construct the optimizer for ``algorithm``.
 
     All returned optimizers expose ``suggest()`` / ``observe(reward)``; use
     :func:`best_config_of` to read the incumbent uniformly across them.
-    ``beta`` (the explore/exploit switching exponent) only applies to
-    IMABO/IMABO-noTPE/IMOSS-TABFM/IMOSS-TABPFN. ``tabfm_model`` should be a
-    single pre-loaded model shared across all seeds (see :func:`load_tabfm`) --
-    IMOSS-TABFM only builds its own copy via ``load_tabfm()`` as a fallback
-    for standalone/one-off calls. ``tabpfn_model`` is the analogous shared
-    handle for IMOSS-TABPFN (see :func:`load_tabpfn`).
+    ``beta`` (the explore/exploit switching exponent) applies to every IMOSS arm
+    and to UCB-AIR. ``tabfm_model`` should be a single pre-loaded model shared
+    across all seeds (see :func:`load_tabfm`) -- IMOSS-TABFM only builds its own
+    copy via ``load_tabfm()`` as a fallback for standalone/one-off calls.
+    ``tabpfn_model`` is the analogous shared handle for the TabPFN arms (see
+    :func:`load_tabpfn`). ``acquisition``/``quantile`` are TabPFN-only and
+    ``None`` means "this arm's default" (see :func:`tabpfn_settings`).
     """
-    if algorithm == Algorithm.IMABO:
+    if algorithm == Algorithm.IMOSS_TPE:
         return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=True, beta=beta)
-    elif algorithm == Algorithm.NO_TPE:
+    elif algorithm == Algorithm.IMOSS_RANDOM:
         return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=False, beta=beta)
     elif algorithm == Algorithm.IMOSS_TABFM:
         model = tabfm_model if tabfm_model is not None else load_tabfm()
@@ -117,14 +197,37 @@ def build_optimizer(
         )
     elif algorithm == Algorithm.IMOSS_TABPFN:
         model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
+        acq, q = tabpfn_settings(algorithm, acquisition, quantile)
+        # The tuned oracle: everything not named here is an IMABOTabPFN default,
+        # and the class ships the tuned configuration (mutation candidate pool,
+        # mutation_scale 0.1, refit_every 1).
         return IMABOTabPFN(
             search_space=SEARCH_SPACE,
             seed=seed,
             beta=beta,
             tabpfn_model=model,
-            acquisition=acquisition,
-            quantile=quantile,
+            acquisition=acq,
+            quantile=q,
         )
+    elif algorithm == Algorithm.IMOSS_TABPFN_UNTUNED:
+        model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
+        acq, q = tabpfn_settings(algorithm, acquisition, quantile)
+        # The old reference configuration: a uniform candidate pool, the shipped
+        # shortlist depth and the 0.99 quantile. Spelled out because the class
+        # defaults are now the tuned configuration.
+        return IMABOTabPFN(
+            search_space=SEARCH_SPACE,
+            seed=seed,
+            beta=beta,
+            tabpfn_model=model,
+            candidate_source="uniform",
+            mutation_scale=None,
+            refit_every=10,
+            acquisition=acq,
+            quantile=q,
+        )
+    elif algorithm == Algorithm.IMOSS_MUTATE_KLXTPE:
+        return IMABOCoordUCB(search_space=SEARCH_SPACE, seed=seed, beta=beta)
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=SEARCH_SPACE, seed=seed)
     elif algorithm == Algorithm.OPTUNA:
@@ -158,20 +261,35 @@ def require_best_config_of(optimizer) -> dict:
     return config
 
 
-def algo_label(algorithm: Algorithm, optuna_k: int = 1, beta: float = 0.8) -> str:
-    """File/stats label; distinguishes Optuna-k and non-default-beta runs."""
+def algo_label(
+    algorithm: Algorithm,
+    optuna_k: int = 1,
+    beta: float = 0.8,
+    acquisition: str | None = None,
+    quantile: float | None = None,
+) -> str:
+    """File/stats label; distinguishes Optuna-k, non-default-beta and
+    non-default TabPFN-acquisition runs.
+
+    Every result JSON, CSV and checkpoint filename is keyed on this label, so
+    two configurations must never map to the same one -- in particular the tuned
+    and untuned TabPFN arms have distinct enum values, and an acquisition
+    override is tagged by :func:`tabpfn_suffix`.
+    """
     label = algorithm.value
     if algorithm == Algorithm.OPTUNA and optuna_k != 1:
         label += f"-k{optuna_k}"
     if algorithm in (
-        Algorithm.IMABO,
-        Algorithm.NO_TPE,
+        Algorithm.IMOSS_TPE,
+        Algorithm.IMOSS_RANDOM,
         Algorithm.IMOSS_TABFM,
         Algorithm.IMOSS_TABPFN,
+        Algorithm.IMOSS_TABPFN_UNTUNED,
+        Algorithm.IMOSS_MUTATE_KLXTPE,
         Algorithm.UCB_AIR,
     ):
         label += f"-beta{beta}"
-    return label
+    return label + tabpfn_suffix(algorithm, acquisition, quantile)
 
 
 client = OpenRouter(api_key=os.getenv("OPENROUTER_API_KEY"))
@@ -279,8 +397,8 @@ def _run_algorithm(
     position: int | None = None,
     tabfm_model: Any = None,
     tabpfn_model: Any = None,
-    acquisition: str = "quantile",
-    quantile: float = 0.99,
+    acquisition: str | None = None,
+    quantile: float | None = None,
 ) -> dict:
     optimizer = build_optimizer(
         algorithm,
@@ -468,12 +586,12 @@ def run_multiple_experiments(
     n_runs: int = 5,
     base_seed: int = 42,
     n_holdout: int = 100,
-    algorithm: Algorithm = Algorithm.IMABO,
+    algorithm: Algorithm = Algorithm.IMOSS_TPE,
     optuna_k: int = 1,
     beta: float = 0.8,
     max_parallel_runs: int = 5,
-    acquisition: str = "quantile",
-    quantile: float = 0.99,
+    acquisition: str | None = None,
+    quantile: float | None = None,
 ) -> list[dict]:
     # Built once; the Dense index spans the full corpus, so each run only
     # re-samples its (train, holdout) split per seed (no embedding rebuild).
@@ -484,11 +602,11 @@ def run_multiple_experiments(
         seed=base_seed,
     )
 
-    label = algo_label(algorithm, optuna_k, beta)
+    label = algo_label(algorithm, optuna_k, beta, acquisition, quantile)
     seeds = [base_seed + i * 1000 for i in range(n_runs)]
 
     tabfm_model = load_tabfm() if algorithm == Algorithm.IMOSS_TABFM else None
-    tabpfn_model = load_tabpfn() if algorithm == Algorithm.IMOSS_TABPFN else None
+    tabpfn_model = load_tabpfn() if algorithm in _TABPFN_ALGORITHMS else None
 
     splits: dict[int, tuple[list[str], list[str]]] = {}
     for seed in seeds:
@@ -507,9 +625,21 @@ def run_multiple_experiments(
             return run_result
 
         train_qids, holdout_qids = splits[seed]
+        # The label separates algorithms/configurations, n_samples separates
+        # budgets: a checkpoint is a prefix of one specific train_qids stream,
+        # and resampling at another n_samples yields a different stream (caught
+        # by the qid check in _run_algorithm, but only after the fact).
         checkpoint_path = (
+            RESULT_FOLDER
+            / f"checkpoint_{label}_hotpotqa_{n_samples}samples_seed{seed}.jsonl"
+        )
+        legacy_checkpoint = (
             RESULT_FOLDER / f"checkpoint_{label}_hotpotqa_seed{seed}.jsonl"
         )
+        # Checkpoints written before the filename carried n_samples: keep
+        # appending to the existing file so those runs stay resumable.
+        if not checkpoint_path.exists() and legacy_checkpoint.exists():
+            checkpoint_path = legacy_checkpoint
         run_result = _run_algorithm(
             benchmark,
             train_qids,
@@ -549,15 +679,24 @@ def run_multiple_experiments(
     return all_results
 
 
-def make_plot(foundation: Algorithm, n_samples: int, n_runs: int) -> None:
-    """Draw the paper's HotpotQA figure: the IMOSS family (TPE + a foundation
-    model) vs UCB-AIR and Random.
+def make_plot(
+    foundation: Algorithm,
+    n_samples: int,
+    n_runs: int,
+    acquisition: str | None = None,
+    quantile: float | None = None,
+) -> None:
+    """Draw the paper's HotpotQA figure: the IMOSS family (TPE + one oracle
+    series) vs UCB-AIR and Random.
 
-    ``foundation`` is the foundation-model series to put in the comparison --
-    ``Algorithm.IMOSS_TABFM`` for the TabFM figure or ``Algorithm.IMOSS_TABPFN``
-    for the TabPFN one. The other three series are model-agnostic, so a single
-    set of baseline checkpoints is reused for either figure. All four series
-    must already be computed (see ``--algorithm`` runs below).
+    ``foundation`` is the oracle series to put in the comparison --
+    ``Algorithm.IMOSS_TABFM`` for the TabFM figure, ``Algorithm.IMOSS_TABPFN``
+    for the TabPFN one, or either tuned arm (``IMOSS-TABPFN-untuned``,
+    ``IMOSS-mutate-KLxTPE``). ``acquisition``/``quantile`` must match the run
+    being plotted, since they are part of the TabPFN arms' labels. The other
+    three series are model-agnostic, so a single set of baseline checkpoints is
+    reused for either figure. All four series must already be computed (see
+    ``--algorithm`` runs below).
     """
     # Head-less: make the plotting helper's trailing ``plt.show()`` a no-op so
     # the PDF is written without a GUI (an interactive backend would block).
@@ -569,17 +708,21 @@ def make_plot(foundation: Algorithm, n_samples: int, n_runs: int) -> None:
         plot_hotpotqa_results,
     )
 
-    tpe = algo_label(Algorithm.IMABO, beta=BETA)
+    tpe = algo_label(Algorithm.IMOSS_TPE, beta=BETA)
     ucb = algo_label(Algorithm.UCB_AIR, beta=BETA)
     rnd = algo_label(Algorithm.RANDOM, beta=BETA)
     hier = algo_label(Algorithm.HIER_MAB, beta=BETA)
-    fm = algo_label(foundation, beta=BETA)
+    fm = algo_label(foundation, beta=BETA, acquisition=acquisition, quantile=quantile)
     display_overrides = {
-        tpe: ALGO_DISPLAY_NAMES.get(Algorithm.IMABO.value, "IMOSS-TPE"),
+        tpe: ALGO_DISPLAY_NAMES.get(Algorithm.IMOSS_TPE.value, "IMOSS-TPE"),
         ucb: ALGO_DISPLAY_NAMES.get(Algorithm.UCB_AIR.value, "UCB-AIR"),
         fm: ALGO_DISPLAY_NAMES.get(foundation.value, foundation.value),
     }
-    fig_slug = foundation.value.lower().replace("-", "_")
+    # The acquisition suffix carries into the filename too, so a sweep never
+    # overwrites the default run's PDF.
+    fig_slug = foundation.value.lower().replace("-", "_") + tabpfn_suffix(
+        foundation, acquisition, quantile
+    )
     print(f"Drawing HotpotQA paper figure ({display_overrides[fm]})...")
     plot_hotpotqa_results(
         algorithms=[tpe, fm, ucb, rnd, hier],
@@ -602,8 +745,11 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Which method to run. The paper's HotpotQA figure compares the "
             "IMOSS family with a foundation-model oracle -- run this once per "
-            "method: 'IMABO' (IMOSS-TPE), 'UCB-AIR', 'Random', and one of "
-            "'IMOSS-TABFM' / 'IMOSS-TABPFN'."
+            "method: 'IMOSS-TPE', 'UCB-AIR', 'Random', and one of "
+            "'IMOSS-TABFM' / 'IMOSS-TABPFN'. 'IMOSS-TABPFN' is the tuned "
+            "oracle of winning_configs.pdf; 'IMOSS-TABPFN-untuned' is the "
+            "previous configuration, kept as a reference arm, and "
+            "'IMOSS-mutate-KLxTPE' the tuned surrogate-free oracle."
         ),
     )
     p.add_argument("--n-samples", type=int, default=5000, help="online HPO steps (T)")
@@ -619,22 +765,25 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--acquisition",
         choices=["ucb", "quantile"],
-        default="quantile",
+        default=None,
         help=(
-            "IMOSS-TABPFN acquisition (see imabo.tabpfn_optimizer.IMABOTabPFN): "
-            "'quantile' (default) ranks candidates on the --quantile level of "
-            "TabPFN's predictive distribution, 'ucb' on mean + kappa*std at "
-            "kappa = Phi^-1(--quantile)."
+            "TabPFN-arm acquisition (see imabo.tabpfn_optimizer.IMABOTabPFN): "
+            "'quantile' ranks candidates on the --quantile level of TabPFN's "
+            "predictive distribution, 'ucb' on mean + kappa*std at "
+            "kappa = Phi^-1(--quantile). Default: the arm's own setting "
+            "(quantile for both TabPFN arms)."
         ),
     )
     p.add_argument(
         "--quantile",
         type=float,
-        default=0.99,
+        default=None,
         help=(
-            "IMOSS-TABPFN exploration level in (0,1): the quantile of "
-            "TabPFN's predictive distribution ranked on (default 0.99); for "
-            "--acquisition ucb it is converted to kappa = Phi^-1(quantile)."
+            "TabPFN-arm exploration level in (0,1): the quantile of TabPFN's "
+            "predictive distribution ranked on; for --acquisition ucb it is "
+            "converted to kappa = Phi^-1(quantile). Default: the arm's own "
+            "setting -- 0.975 for the tuned IMOSS-TABPFN, 0.99 for "
+            "IMOSS-TABPFN-untuned. Overriding either tags the result files."
         ),
     )
     p.add_argument(
@@ -672,4 +821,10 @@ if __name__ == "__main__":
         )
 
     if args.plot or args.plot_only:
-        make_plot(algorithm, args.n_samples, args.n_runs)
+        make_plot(
+            algorithm,
+            args.n_samples,
+            args.n_runs,
+            acquisition=args.acquisition,
+            quantile=args.quantile,
+        )

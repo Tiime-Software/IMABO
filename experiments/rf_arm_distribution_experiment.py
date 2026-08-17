@@ -638,7 +638,6 @@ def run_experiment(
 _DEFAULT_ALGORITHMS = [
     Algorithm.IMOSS,
     Algorithm.IMOSS_TPE,
-    Algorithm.IMOSS_TABFM,
     Algorithm.IMOSS_TABPFN,
     Algorithm.UCB_AIR,
 ]
@@ -711,14 +710,16 @@ def make_plots(
     regret_algos = [
         "IMOSS-Random",
         "IMOSS-TPE",
-        fm_label,
+        "IMOSS-mutate-KLxTPE",
+        # fm_label,
         "UCB-AIR",
         "Hier-MAB",
     ]
     oracle_algos = [
         "IMOSS-Random",
         "IMOSS-TPE",
-        fm_label,
+        "IMOSS-mutate-KLxTPE",
+        # fm_label,
     ]
 
     print("Generating RF reward-landscape structure grid (benchmark-only)...")

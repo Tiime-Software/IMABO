@@ -31,7 +31,7 @@ DATA_DIR = RESULTS_DIR / "hpo_finite_arm_distribution"
 
 set_research_style()
 
-_IMOSS_FAMILY = ["IMOSS-Random", "IMOSS-TPE", "IMOSS-TabFM"]
+_IMOSS_FAMILY = ["IMOSS-Random", "IMOSS-TPE", "IMOSS-mutate-KLxTPE", "IMOSS-TabFM"]
 ALL = _IMOSS_FAMILY + ["UCB-AIR"]
 
 _ORACLE_LABELS = {
@@ -40,6 +40,7 @@ _ORACLE_LABELS = {
     "IMOSS-TPE-univ": "TPE-univ",
     "IMOSS-TabFM": "TabFM",
     "IMOSS-TabPFN": "TabPFN",
+    "IMOSS-mutate-KLxTPE": "mutate-KLxTPE",
 }
 
 # Per-series linestyle overrides (color+marker come from algorithm_style):
@@ -1774,9 +1775,7 @@ def plot_regret_and_oracle_grid(
             if final_errorbar is not None and runs.shape[0] > 1:
                 sd = float(cumulative_runs[:, -1].std(ddof=1))
                 half = (
-                    sd
-                    if final_errorbar == "sd"
-                    else 1.96 * sd / np.sqrt(runs.shape[0])
+                    sd if final_errorbar == "sd" else 1.96 * sd / np.sqrt(runs.shape[0])
                 )
                 x_bar = runs.shape[1] * (1.035 + 0.035 * i_algo)
                 ax.errorbar(
@@ -1847,9 +1846,7 @@ def plot_regret_and_oracle_grid(
         # The dodged final-round bars extend the data range past t=T, which
         # would otherwise grow the shared x tick labels beyond the horizon
         # (a "6000" tick for a T=5000 run); pin the ticks to the horizon.
-        resolved_T = int(
-            max(line.get_xdata()[-1] for line in seen_top.values())
-        )
+        resolved_T = int(max(line.get_xdata()[-1] for line in seen_top.values()))
         for j in range(n):
             axes_bottom[j].set_xticks(np.arange(0, resolved_T + 1, 1000))
 

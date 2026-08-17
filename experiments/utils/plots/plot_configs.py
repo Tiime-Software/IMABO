@@ -163,6 +163,11 @@ _ALGORITHM_ALIASES = {
     "imoss-tabfm": "IMOSS-TabFM",
     "imoss-tabpfn": "IMOSS-TabPFN",
     "imoss-tabpfn-pull": "IMOSS-TabPFN-pull",
+    "imoss-tabpfn-tuned": "IMOSS-TabPFN-tuned",
+    # hotpotqa's reference arm: the pre-tuning TabPFN configuration, i.e. the
+    # identity plain "IMOSS-TabPFN" denotes everywhere else.
+    "imoss-tabpfn-untuned": "IMOSS-TabPFN",
+    "imoss-mutate-klxtpe": "IMOSS-mutate-KLxTPE",
     "ucb-air": "UCB-AIR",
     "ucbair": "UCB-AIR",
     # Same method, two naming families (see the ALGORITHM_STYLES note):
