@@ -15,6 +15,10 @@ model-agnostic and shared by the TabFM and TabPFN figures):
     # then draw the figure (uses --algorithm as the foundation-model series):
     python -m experiments.hotpotqa_experiment --algorithm IMOSS-TABPFN --plot-only
 
+    # or overlay several oracle series in one figure via --plot-algorithms:
+    python -m experiments.hotpotqa_experiment --plot-only \
+        --plot-algorithms IMOSS-TABPFN IMOSS-mutate-KLxTPE
+
 ``IMOSS-TABPFN`` is the tuned TabPFN oracle specified by winning_configs.pdf
 (the IMABOTabPFN class defaults: mutation candidate pool, refit_every=1,
 quantile 0.975). Two more oracle arms run the same way:
@@ -680,23 +684,25 @@ def run_multiple_experiments(
 
 
 def make_plot(
-    foundation: Algorithm,
+    foundations: list[Algorithm],
     n_samples: int,
     n_runs: int,
     acquisition: str | None = None,
     quantile: float | None = None,
 ) -> None:
-    """Draw the paper's HotpotQA figure: the IMOSS family (TPE + one oracle
-    series) vs UCB-AIR and Random.
+    """Draw the paper's HotpotQA figure: the IMOSS family (TPE + one or more
+    oracle series) vs UCB-AIR and Random.
 
-    ``foundation`` is the oracle series to put in the comparison --
+    ``foundations`` are the oracle series to put in the comparison --
     ``Algorithm.IMOSS_TABFM`` for the TabFM figure, ``Algorithm.IMOSS_TABPFN``
     for the TabPFN one, or either tuned arm (``IMOSS-TABPFN-untuned``,
-    ``IMOSS-mutate-KLxTPE``). ``acquisition``/``quantile`` must match the run
-    being plotted, since they are part of the TabPFN arms' labels. The other
-    three series are model-agnostic, so a single set of baseline checkpoints is
-    reused for either figure. All four series must already be computed (see
-    ``--algorithm`` runs below).
+    ``IMOSS-mutate-KLxTPE``). Pass more than one to overlay several series in
+    the same figure (e.g. TabPFN and mutate-KLxTPE together). ``acquisition``/
+    ``quantile`` must match the run being plotted for every TabPFN series in
+    the list, since they are part of the TabPFN arms' labels. The other three
+    series are model-agnostic, so a single set of baseline checkpoints is
+    reused across every combination. Every series must already be computed
+    (see ``--algorithm`` runs below).
     """
     # Head-less: make the plotting helper's trailing ``plt.show()`` a no-op so
     # the PDF is written without a GUI (an interactive backend would block).
@@ -709,30 +715,45 @@ def make_plot(
     )
 
     tpe = algo_label(Algorithm.IMOSS_TPE, beta=BETA)
+    mutate_tpe = algo_label(Algorithm.IMOSS_MUTATE_KLXTPE, beta=BETA)
     ucb = algo_label(Algorithm.UCB_AIR, beta=BETA)
     rnd = algo_label(Algorithm.RANDOM, beta=BETA)
     hier = algo_label(Algorithm.HIER_MAB, beta=BETA)
-    fm = algo_label(foundation, beta=BETA, acquisition=acquisition, quantile=quantile)
+    fm_labels = [
+        algo_label(f, beta=BETA, acquisition=acquisition, quantile=quantile)
+        for f in foundations
+    ]
     display_overrides = {
         tpe: ALGO_DISPLAY_NAMES.get(Algorithm.IMOSS_TPE.value, "IMOSS-TPE"),
+        mutate_tpe: ALGO_DISPLAY_NAMES.get(
+            Algorithm.IMOSS_MUTATE_KLXTPE.value, "IMOSS-mutate-KLxTPE"
+        ),
         ucb: ALGO_DISPLAY_NAMES.get(Algorithm.UCB_AIR.value, "UCB-AIR"),
-        fm: ALGO_DISPLAY_NAMES.get(foundation.value, foundation.value),
     }
+    for foundation, fm in zip(foundations, fm_labels):
+        display_overrides[fm] = ALGO_DISPLAY_NAMES.get(
+            foundation.value, foundation.value
+        )
     # The acquisition suffix carries into the filename too, so a sweep never
-    # overwrites the default run's PDF.
-    fig_slug = foundation.value.lower().replace("-", "_") + tabpfn_suffix(
-        foundation, acquisition, quantile
+    # overwrites the default run's PDF; several foundations join with "_" so
+    # each combination gets its own file.
+    fig_slug = "_".join(
+        f.value.lower().replace("-", "_") + tabpfn_suffix(f, acquisition, quantile)
+        for f in foundations
     )
-    print(f"Drawing HotpotQA paper figure ({display_overrides[fm]})...")
+    print(
+        "Drawing HotpotQA paper figure "
+        f"({', '.join(display_overrides[fm] for fm in fm_labels)})..."
+    )
     plot_hotpotqa_results(
-        algorithms=[tpe, fm, ucb, rnd, hier],
+        algorithms=[mutate_tpe, *fm_labels, ucb, rnd, hier],
         n_samples=n_samples,
         n_runs=n_runs,
         save_fig=True,
         display_overrides=display_overrides,
         fig_name=f"hotpotqa_imabo_family_{fig_slug}_{n_samples}samples.pdf",
         columns=1,
-        conference="aaai",
+        conference="arxiv",
     )
 
 
@@ -740,7 +761,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--algorithm",
-        default=Algorithm.IMOSS_TABFM.value,
+        default=Algorithm.IMOSS_TABPFN.value,
         choices=[a.value for a in Algorithm],
         help=(
             "Which method to run. The paper's HotpotQA figure compares the "
@@ -790,15 +811,28 @@ def _parse_args() -> argparse.Namespace:
         "--plot",
         action="store_true",
         help=(
-            "after computing, draw the paper figure (uses --algorithm as the "
-            "foundation-model series; the other three series must already be "
-            "computed on disk)"
+            "after computing, draw the paper figure (uses --algorithm, or "
+            "--plot-algorithms if given, as the foundation-model series; the "
+            "other three series must already be computed on disk)"
         ),
     )
     p.add_argument(
         "--plot-only",
         action="store_true",
         help="skip computing, only (re)draw the figure",
+    )
+    p.add_argument(
+        "--plot-algorithms",
+        nargs="+",
+        choices=[a.value for a in Algorithm],
+        default=None,
+        help=(
+            "Which oracle series to overlay in the figure (only used with "
+            "--plot/--plot-only); defaults to [--algorithm]. Pass more than "
+            "one to compare series in the same figure, e.g. "
+            "'IMOSS-TABPFN IMOSS-mutate-KLxTPE'. Each must already be "
+            "computed on disk."
+        ),
     )
     return p.parse_args()
 
@@ -821,8 +855,13 @@ if __name__ == "__main__":
         )
 
     if args.plot or args.plot_only:
+        foundations = (
+            [Algorithm(a) for a in args.plot_algorithms]
+            if args.plot_algorithms
+            else [algorithm]
+        )
         make_plot(
-            algorithm,
+            foundations,
             args.n_samples,
             args.n_runs,
             acquisition=args.acquisition,

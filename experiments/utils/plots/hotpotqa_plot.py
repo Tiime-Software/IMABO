@@ -31,6 +31,13 @@ ALGO_DISPLAY_NAMES = {
 
 _IMABO_FAMILY = ["IMABO", "IMABO-noTPE"]
 
+# Below this physical width, plot_hotpotqa_results' two panels stack
+# vertically instead of sitting side by side (see the `stacked` comment
+# there). Only AAAI's single-column placement (3.3in) falls under it;
+# AAAI's full text width (7.0in) and every single-column venue's one text
+# column (NeurIPS 5.5in, arXiv 6.5in) clear it comfortably.
+_STACK_BELOW_WIDTH_IN = 4.5
+
 
 def display_label(algo: str) -> str:
     return ALGO_DISPLAY_NAMES.get(algo, algo)
@@ -66,28 +73,35 @@ def plot_hotpotqa_results(
         dirs: Per-algorithm results directory override (default RESULTS_DIR),
             for when a series' CSVs live in a different subfolder.
         columns: 1 (fits a single column) or 2 (spans both columns, a LaTeX
-            `figure*`) -- see plot_configs.paper_figure_width_in.
+            `figure*`; only valid for two-column venues like AAAI) -- see
+            plot_configs.paper_figure_width_in. Side-by-side vs. stacked
+            panel layout is decided from the resulting physical width, not
+            this count directly (see _STACK_BELOW_WIDTH_IN).
         conference: Which conference's column widths to use (default "aaai").
     """
     names = {**ALGO_DISPLAY_NAMES, **(display_overrides or {})}
     label_of = lambda algo: names.get(algo, algo)
     dir_of = lambda algo: (dirs or {}).get(algo, RESULTS_DIR)
     # Legend forced onto a single row (ncol = n algorithms, see the direct
-    # create_figure_legend call below) at a reduced font so all four names fit
-    # across the column width without wrapping. A 1-row legend also needs only
-    # a thin top band, which pulls it close to the top panel.
-    style = paper_style(conference=conference, columns=columns, legend_fontsize=5.5)
+    # create_figure_legend call below); a 1-row legend also needs only a thin
+    # top band, which pulls it close to the top panel. Font size is left at
+    # PaperStyle's shared default (PAPER_LEGEND_FONTSIZE) so this legend reads
+    # at the same size as every other paper figure's, e.g. hpo_plot's.
+    style = paper_style(conference=conference, columns=columns)
     algo_tick_fontsize = style.tick_fontsize - 1.0
     n_legend_rows = 1
 
     legend_band_in = 0.15 * n_legend_rows + 0.03
-    # Layout adapts to the placement: full text width (columns=2) fits the two
-    # panels side by side; a single narrow column (columns=1) is too tight for
-    # that (each panel would be ~half a column), so stack them vertically --
+    # Layout adapts to available width, not the raw `columns` count: AAAI's
+    # single-column placement (3.3in) is too narrow to fit two panels side by
+    # side (each would be ~half a column), so those stack vertically instead --
     # each panel then spans the full column width. Taller, but that's the
     # natural shape for a single-column figure, and the extra height is what
-    # makes the closely-spaced online-regret curves legible.
-    stacked = columns == 1
+    # makes the closely-spaced online-regret curves legible. Single-column
+    # VENUES (NeurIPS 5.5in, arXiv 6.5in) only ever have columns=1 -- but
+    # their one text column is as wide as AAAI's two-column figure*, so it
+    # fits the side-by-side layout just fine.
+    stacked = style.width_in < _STACK_BELOW_WIDTH_IN
     if stacked:
         panels_in = 2 * (0.62 * style.width_in)
         gridspec_kw = None
@@ -369,8 +383,14 @@ def plot_config_analysis(
 
 if __name__ == "__main__":
     beta_08_dir = RESULTS_DIR / "beta_0.8"
-    algorithms = ["IMABO-beta0.5", "IMOSS-TABFM-beta0.5", "UCB-AIR-beta0.5", "Random"]
-    # dirs = {algo: beta_08_dir for algo in algorithms}
+    algorithms = [
+        "IMOSS-TPE-beta0.5",
+        "IMOSS-TABPFN-beta0.5",
+        "IMOSS-mutate-KLxTPE-beta0.5",
+        "UCB-AIR-beta0.5",
+        "Random",
+        "Hier-MAB",
+    ]
     dirs = None
     display_overrides = {
         "IMABO-beta0.5": "IMOSS-TPE",

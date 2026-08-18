@@ -7,7 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
+from enum import Enum
 from experiments.hpo_experiment import BETA
 from experiments.utils.plots.plot_configs import (
     RESEARCH_COLORS,
@@ -28,8 +28,53 @@ RESULTS_DIR = Path(__file__).parents[3] / "results"
 set_research_style()
 
 
+class Algorithms(Enum):
+    HOO_T = "HOO-T"
+    STOSOO = "StoSOO"
+    STROQUOOL = "Stroquool"
+    Hier_MAB_10 = "Hier-MAB-10"
+    Hier_MAB_100 = "Hier-MAB-100"
+    IMABO = "IMABO"
+    IMOSS_mutate_KLxTPE = "IMOSS-mutate-KLxTPE"
+    IMOSS_TabPFN = "IMOSS-TabPFN"
+    IMOSS_TabPFN_untuned = "IMOSS-TabPFN-untuned"
+
+
+def _algo_value(a):
+    """Accept either a raw algorithm-name string or an Algorithms member in
+    `algorithms=` filters -- an Enum member never equals its own .value
+    (Algorithms.IMABO != "IMABO"), so filtering directly against the CSV's
+    raw strings silently drops every entry when members are passed."""
+    return a.value if isinstance(a, Enum) else a
+
+
+# Legend/plot order: the IMOSS family first, then the tree-based baselines,
+# then Hier-MAB -- independent of whatever order the CSV happens to list
+# algorithms in (pandas' `.unique()` follows first-occurrence order).
+_HPO_CANONICAL_ORDER = [
+    "IMABO",
+    "IMOSS-mutate-KLxTPE",
+    "IMOSS-TabPFN",
+    "IMOSS-TabPFN-untuned",
+    "HOO-T",
+    "StoSOO",
+    "Stroquool",
+    "Hier-MAB-10",
+    "Hier-MAB-100",
+]
+
+
+def _hpo_ordered(present) -> list:
+    """`present` sorted by _HPO_CANONICAL_ORDER; anything not listed there
+    (e.g. a brand-new algorithm) is appended at the end rather than dropped."""
+    present = list(present)
+    ordered = [a for a in _HPO_CANONICAL_ORDER if a in present]
+    ordered += [a for a in present if a not in _HPO_CANONICAL_ORDER]
+    return ordered
+
+
 def plot_performance_trajectories(
-    benchmark="lr", save_fig=False, exp_type="hpo", beta=BETA
+    benchmark="lr", save_fig=False, exp_type="hpo", beta=BETA, algorithms=None
 ):
     """
     Plot performance trajectories showing simple regret vs cumulative regret (total regret).
@@ -40,13 +85,20 @@ def plot_performance_trajectories(
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
+        algorithms: Restrict to these algorithm names (default: every
+            algorithm found in the CSV).
     """
     csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     df = pd.read_csv(csv_file)
 
     has_raw_data = "simple_regrets" in df.columns and "sum_regrets" in df.columns
 
-    algorithms = df["algorithm"].unique().tolist()
+    available = df["algorithm"].unique().tolist()
+    algorithms = _hpo_ordered(
+        [_algo_value(a) for a in algorithms if _algo_value(a) in available]
+        if algorithms is not None
+        else available
+    )
     n_evals = sorted(df["n_iterations"].unique())
 
     base_markers = ["o", "s", "^", "D", "v", "<", ">", "p"]
@@ -230,7 +282,12 @@ def plot_performance_trajectories(
 
 
 def plot_cumulative_regret_over_iterations(
-    benchmark="lr", n_iterations=10000, save_fig=False, exp_type="hpo", beta=BETA
+    benchmark="lr",
+    n_iterations=10000,
+    save_fig=False,
+    exp_type="hpo",
+    beta=BETA,
+    algorithms=None,
 ):
     """
     Plot cumulative regret over iterations for all algorithms at a specific iteration budget.
@@ -241,6 +298,8 @@ def plot_cumulative_regret_over_iterations(
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
+        algorithms: Restrict to these algorithm names (default: every
+            algorithm found in the CSV).
     """
     csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
     df = pd.read_csv(csv_file)
@@ -251,7 +310,12 @@ def plot_cumulative_regret_over_iterations(
         print(f"No data found for {n_iterations} iterations")
         return
 
-    algorithms = df["algorithm"].unique()
+    available = df["algorithm"].unique().tolist()
+    algorithms = _hpo_ordered(
+        [_algo_value(a) for a in algorithms if _algo_value(a) in available]
+        if algorithms is not None
+        else available
+    )
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -321,7 +385,7 @@ def plot_cumulative_regret_over_iterations(
 
 
 def plot_simple_regret_vs_iterations(
-    benchmark="lr", save_fig=False, exp_type="hpo", beta=BETA
+    benchmark="lr", save_fig=False, exp_type="hpo", beta=BETA, algorithms=None
 ):
     """
     Plot simple regret for all algorithms across different iteration budgets.
@@ -332,11 +396,18 @@ def plot_simple_regret_vs_iterations(
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
+        algorithms: Restrict to these algorithm names (default: every
+            algorithm found in the CSV).
     """
     csv_file = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
     df = pd.read_csv(csv_file)
 
-    algorithms = df["algorithm"].unique()
+    available = df["algorithm"].unique().tolist()
+    algorithms = _hpo_ordered(
+        [_algo_value(a) for a in algorithms if _algo_value(a) in available]
+        if algorithms is not None
+        else available
+    )
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -407,7 +478,12 @@ def plot_simple_regret_vs_iterations(
 
 
 def plot_combined_regrets(
-    benchmark="lr", n_iterations=10000, save_fig=False, exp_type="hpo", beta=BETA
+    benchmark="lr",
+    n_iterations=10000,
+    save_fig=False,
+    exp_type="hpo",
+    beta=BETA,
+    algorithms=None,
 ):
     """
     Plot cumulative regret and simple regret as subplots with common legend.
@@ -418,6 +494,8 @@ def plot_combined_regrets(
         save_fig: Whether to save the figure
         exp_type: Experiment type for filename
         beta: Beta value used for the run, for filename
+        algorithms: Restrict to these algorithm names (default: every
+            algorithm found in the CSV).
     """
     iterations_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_iterations.csv"
     summary_csv = RESULTS_DIR / f"{benchmark}_{exp_type}_beta_{beta}_summary.csv"
@@ -431,7 +509,12 @@ def plot_combined_regrets(
         print(f"No data found for {n_iterations} iterations")
         return
 
-    algorithms = df_iterations["algorithm"].unique()
+    available = df_iterations["algorithm"].unique().tolist()
+    algorithms = _hpo_ordered(
+        [_algo_value(a) for a in algorithms if _algo_value(a) in available]
+        if algorithms is not None
+        else available
+    )
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
@@ -544,6 +627,7 @@ def plot_combined_regrets_grid(
     beta=BETA,
     columns=1,
     conference="aaai",
+    algorithms=None,
 ):
     """
     Plot cumulative regret and simple regret for multiple benchmarks in a single
@@ -571,6 +655,8 @@ def plot_combined_regrets_grid(
             plain line/errorbar panels per row read fine at that width) or 2
             (spans both columns, a LaTeX `figure*`).
         conference: Which conference's column widths to use (default "aaai").
+        algorithms: Restrict to these algorithm names (default: every
+            algorithm found in each benchmark's CSV).
     """
     n_bench = len(benchmarks)
     style = paper_style(conference=conference, columns=columns, markevery_divisor=10)
@@ -582,7 +668,12 @@ def plot_combined_regrets_grid(
     first_iters_csv = (
         RESULTS_DIR / f"{benchmarks[0]}_{exp_type}_beta_{beta}_iterations.csv"
     )
-    n_algorithms = pd.read_csv(first_iters_csv)["algorithm"].nunique()
+    first_available = pd.read_csv(first_iters_csv)["algorithm"].unique().tolist()
+    n_algorithms = (
+        len([_algo_value(a) for a in algorithms if _algo_value(a) in first_available])
+        if algorithms is not None
+        else len(first_available)
+    )
     n_legend_rows = style.n_legend_rows(n_algorithms)
 
     # sharex="col": both rows of a column share one x-axis, so only the bottom
@@ -616,12 +707,17 @@ def plot_combined_regrets_grid(
             print(f"No data found for {benchmark} at {n_iterations} iterations")
             continue
 
-        algorithms = df_iterations["algorithm"].unique()
+        row_available = df_iterations["algorithm"].unique().tolist()
+        row_algorithms = _hpo_ordered(
+            [_algo_value(a) for a in algorithms if _algo_value(a) in row_available]
+            if algorithms is not None
+            else row_available
+        )
         ax_left = axes[row, 0]
         ax_right = axes[row, 1]
 
         # --- LEFT COL: Cumulative Regret over Iterations ---
-        for algo in algorithms:
+        for algo in row_algorithms:
             algo_data = df_iterations[df_iterations["algorithm"] == algo]
             iterations = algo_data["iteration"].values
             mean_regrets = algo_data["regret_mean"].values
@@ -654,7 +750,7 @@ def plot_combined_regrets_grid(
             ax_left.tick_params(labelbottom=False)
 
         # --- RIGHT COL: Simple Regret vs Evaluation Budget ---
-        for algo in algorithms:
+        for algo in row_algorithms:
             algo_data = df_summary[df_summary["algorithm"] == algo].sort_values(
                 "n_iterations"
             )
@@ -737,6 +833,15 @@ if __name__ == "__main__":
         save_fig=True,
         exp_type="hpo",
         beta=BETA,
-        conference="aaai",
-        columns=2,
+        conference="arxiv",
+        columns=1,
+        algorithms=[
+            Algorithms.HOO_T,
+            Algorithms.STOSOO,
+            Algorithms.STROQUOOL,
+            Algorithms.Hier_MAB_10,
+            # Algorithms.Hier_MAB_100,
+            Algorithms.IMABO,
+            Algorithms.IMOSS_mutate_KLxTPE,
+        ],
     )

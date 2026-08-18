@@ -3,9 +3,14 @@ Toy-function experiment: compare IMABO against StoSOO, HOO-T, and Stroquool.
 
 Usage (from repo root):
     python -m experiments.toy_experiment
+    python -m experiments.toy_experiment --algorithm IMOSS-mutate-KLxTPE
+    python -m experiments.toy_experiment --quick  # fast smoke test
+    python -m experiments.toy_experiment --plot-only  # (re)draw the figure only
 """
 
+import argparse
 import json
+import time
 from enum import Enum
 from pathlib import Path
 from typing import TypedDict
@@ -43,9 +48,6 @@ class Algorithm(Enum):
     # Factored baseline (AutoRAG-HP) on an 11-point grid per axis
     # (linspace(lower, upper, 11) per coordinate via HierMAB.axis_values).
     HIER_MAB_11 = "Hier-MAB-11"
-    # The two tuned explore oracles -- see winning_configs.pdf.
-    IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
-    IMOSS_TABPFN_TUNED = "IMOSS-TabPFN-tuned"
 
 
 class RegretData(TypedDict):
@@ -93,21 +95,8 @@ def _build_optimizer(
         return TimedOptimizer(hoo_t, n_iterations, dim, rho=0.4, nu1=10.0), True
     if algo == Algorithm.STROQUOOL:
         return TimedOptimizer(stroquool, n_iterations, dim), True
-    if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
-        return IMABOCoordUCB(search_space=search_space, seed=seed, beta=beta), False
-    if algo == Algorithm.IMOSS_TABPFN_TUNED:
-        return (
-            IMABOTabPFN(
-                search_space=search_space,
-                seed=seed,
-                beta=beta,
-                tabpfn_model=_tabpfn_model(),
-            ),
-            False,
-        )
     if algo == Algorithm.HIER_MAB_11:
         return HierMAB(search_space, n_points=11, seed=seed), False
-    raise ValueError(f"unknown algorithm: {algo!r}")
 
 
 def run_optimization(
@@ -116,6 +105,7 @@ def run_optimization(
     beta: float = 0.5,
     n_iterations: int = 1000,
     seed: int = 42,
+    algorithms: list[Algorithm] | None = None,
 ) -> dict[str, RegretData]:
     """Run one seed of the experiment, checkpointed per algorithm.
 
@@ -123,8 +113,10 @@ def run_optimization(
     stream depends only on the seed, not on which algorithms ran before it in
     the same process -- a checkpoint-resumed run is identical to a fresh one.
     """
+    algorithms = list(Algorithm) if algorithms is None else algorithms
+
     regrets: dict[str, RegretData] = {}
-    for algo in Algorithm:
+    for algo in algorithms:
         opt_name = algo.value
         ckpt = (
             CKPT_DIR
@@ -189,6 +181,7 @@ def run_multiple_experiments(
     base_seed: int = 42,
     n_jobs: int = 8,
     beta: float = 0.5,
+    algorithms: list[Algorithm] | None = None,
 ) -> list[dict[str, RegretData]]:
     return Parallel(n_jobs=n_jobs, backend="loky", verbose=5)(
         delayed(run_optimization)(
@@ -197,35 +190,133 @@ def run_multiple_experiments(
             beta,
             n_iterations,
             base_seed + i * 1000,
+            algorithms=algorithms,
         )
         for i in range(n_runs)
     )
 
 
+def make_plot(
+    functions,
+    columns: int = 1,
+    save_fig: bool = True,
+    conference: str = "arxiv",
+) -> None:
+    """Draw the paper's toy-function appendix figure: performance
+    trajectories (simple vs. cumulative regret) for every algorithm, one
+    panel per function. Reads each function's `{fn}_toy_summary.csv` (written
+    by save_results_to_csv after a run), not the raw checkpoints.
+    """
+    # Head-less: make the plotting helper's trailing ``plt.show()`` a no-op so
+    # the PDF is written without a GUI (an interactive backend would block).
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from experiments.utils.plots.toy_plot import plot_multiple_trajectories
+
+    print(f"Generating toy performance-trajectories figure ({', '.join(functions)})...")
+    plot_multiple_trajectories(
+        functions,
+        save_fig=save_fig,
+        exp_type="toy",
+        columns=columns,
+        conference=conference,
+    )
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--algorithm",
+        default="all",
+        choices=["all"] + [a.value for a in Algorithm],
+        help="method to run (default: 'all' -- every algorithm)",
+    )
+    p.add_argument(
+        "--functions",
+        nargs="+",
+        default=["sin1", "garland", "rastrigin", "gaussian"],
+        help="toy objective functions to run (see ObjectiveFunctions)",
+    )
+    p.add_argument("--dim", type=int, default=4, help="search-space dimensionality")
+    p.add_argument(
+        "--n-iters",
+        type=int,
+        nargs="+",
+        default=[1000, 3000, 5000, 10000],
+        help="iteration budgets (T) to sweep, one run per value",
+    )
+    p.add_argument(
+        "--n-runs", type=int, default=20, help="independent seeds per algorithm"
+    )
+    p.add_argument("--base-seed", type=int, default=42)
+    p.add_argument("--n-jobs", type=int, default=8, help="parallel seed workers")
+    p.add_argument(
+        "--plot", action="store_true", help="after running, draw the paper figure"
+    )
+    p.add_argument(
+        "--plot-only", action="store_true", help="skip running, only (re)plot"
+    )
+    p.add_argument("--no-plot", action="store_true", help="run but skip plotting")
+    p.add_argument(
+        "--quick",
+        action="store_true",
+        help="fast smoke test: T=60, 2 runs, sin1 only",
+    )
+    return p.parse_args()
+
+
 if __name__ == "__main__":
-    function_name = ["sin1", "garland", "rastrigin", "gaussian"]
-    # function_name = ["gaussian"]
-    dim = 4
-    n_runs = 20
-    base_seed = 42
-    for fn in function_name:
-        print(f"Running {fn}...")
-        test_cases = [
-            (fn, dim, 1000),
-            (fn, dim, 3000),
-            (fn, dim, 5000),
-            (fn, dim, 10000),
-        ]
+    args = _parse_args()
 
-        algorithms_names = [algo.value for algo in Algorithm]
-        n_evals = [tc[2] for tc in test_cases]
-        keys = [f"{fn}_{d}D_{n}" for fn, d, n in test_cases]
-        results_dict = {}
+    if args.quick:
+        functions, n_iters, n_runs = ["sin1"], [60], 2
+    else:
+        functions, n_iters, n_runs = args.functions, args.n_iters, args.n_runs
 
-        for i, (fn, d, n_iter) in enumerate(tqdm(test_cases, desc="Test cases")):
-            all_results = run_multiple_experiments(
-                fn, d, n_iter, n_runs=n_runs, base_seed=base_seed, beta=BETA
-            )
-            results_dict[keys[i]] = calculate_statistics(all_results)
-        save_results_to_csv(results_dict, fn, exp_type="toy", result_dir=RESULT_DIR)
-        save_iterations_to_csv(results_dict, fn, exp_type="toy", result_dir=RESULT_DIR)
+    dim = args.dim
+    algorithms = (
+        list(Algorithm) if args.algorithm == "all" else [Algorithm(args.algorithm)]
+    )
+
+    if not args.plot_only:
+        total_tasks = len(functions) * len(n_iters)
+        start = time.time()
+        with tqdm(total=total_tasks, desc="function x budget", unit="task") as bar:
+            for fn in functions:
+                print(f"Running {fn}...")
+                test_cases = [(fn, dim, n_iter) for n_iter in n_iters]
+                keys = [f"{fn}_{d}D_{n}" for fn, d, n in test_cases]
+                results_dict = {}
+
+                for i, (fn_, d, n_iter) in enumerate(test_cases):
+                    all_results = run_multiple_experiments(
+                        fn_,
+                        d,
+                        n_iter,
+                        n_runs=n_runs,
+                        base_seed=args.base_seed,
+                        n_jobs=args.n_jobs,
+                        beta=BETA,
+                        algorithms=algorithms,
+                    )
+                    results_dict[keys[i]] = calculate_statistics(all_results)
+                    bar.update(1)
+                    done, total = bar.n, bar.total
+                    elapsed = time.time() - start
+                    eta = elapsed / done * (total - done) if done else 0.0
+                    bar.set_postfix_str(f"elapsed {elapsed/60:.1f}m, eta {eta/60:.1f}m")
+
+                save_results_to_csv(
+                    results_dict, fn, exp_type="toy", result_dir=RESULT_DIR
+                )
+                save_iterations_to_csv(
+                    results_dict, fn, exp_type="toy", result_dir=RESULT_DIR
+                )
+
+    # Plot when asked (--plot/--plot-only) or by default after an "all" run.
+    want_plot = not args.no_plot and (
+        args.plot or args.plot_only or args.algorithm == "all"
+    )
+    if want_plot:
+        make_plot(functions, columns=1, save_fig=True)
