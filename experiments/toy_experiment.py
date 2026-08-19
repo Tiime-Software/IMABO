@@ -27,8 +27,7 @@ from experiments.utils.stats import (
     save_iterations_to_csv,
     save_results_to_csv,
 )
-from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
-from imabo.tabpfn_optimizer import load_tabpfn
+from imabo import IMOSSTPE, load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -86,7 +85,7 @@ def _build_optimizer(
     the native domain."""
     if algo == Algorithm.IMABO:
         return (
-            IMABO(search_space=search_space, seed=seed, multivariate=True, beta=beta),
+            IMOSSTPE(search_space, beta=beta, seed=seed, multivariate=True),
             False,
         )
     if algo == Algorithm.STOSOO:

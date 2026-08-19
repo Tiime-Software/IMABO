@@ -57,7 +57,7 @@ from tqdm import tqdm
 
 from experiments.baselines.hier_mab import HierMAB
 from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
-from imabo import IMABO
+from imabo import IMOSSTPE, IMOSSRandom
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "coordination_barrier"
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -242,55 +242,48 @@ def _build(land: Landscape, slug: str, n_iterations: int, seed: int, tabpfn_mode
         return HierMAB(land.search_space, n_points=m, seed=seed), False
     if slug == "imoss_random":
         return (
-            IMABO(
-                search_space=land.search_space,
-                seed=seed,
-                multivariate=True,
-                use_tpe=False,
-                beta=BETA,
-            ),
+            IMOSSRandom(land.search_space, beta=BETA, seed=seed),
             False,
         )
     if slug == "imoss_tpe":
         return (
-            IMABO(
-                search_space=land.search_space, seed=seed, multivariate=True, beta=BETA
-            ),
+            IMOSSTPE(land.search_space, beta=BETA, seed=seed, multivariate=True),
             False,
         )
     if slug == "imoss_tpe_uni":
         return (
-            IMABO(
-                search_space=land.search_space, seed=seed, multivariate=False, beta=BETA
-            ),
+            IMOSSTPE(land.search_space, beta=BETA, seed=seed, multivariate=False),
             False,
         )
     if slug == "imoss_mutate_klxtpe":
-        from imabo import IMABOCoordUCB
+        from imabo import IMOSSMutateKLTPE
 
         return (
-            IMABOCoordUCB(search_space=land.search_space, seed=seed, beta=BETA),
+            IMOSSMutateKLTPE(land.search_space, beta=BETA, seed=seed),
             False,
         )
     if slug == "imoss_tabpfn_tuned":
-        from imabo.tabpfn_optimizer import IMABOTabPFN
+        from imabo import IMOSSTabPFN
 
         return (
-            IMABOTabPFN(
-                search_space=land.search_space, seed=seed,
-                tabpfn_model=tabpfn_model, beta=BETA, n_estimators=4,
+            IMOSSTabPFN(
+                land.search_space,
+                beta=BETA,
+                seed=seed,
+                model=tabpfn_model,
+                n_estimators=4,
             ),
             False,
         )
     if slug == "imoss_tabpfn":
-        from imabo.tabpfn_optimizer import IMABOTabPFN
+        from imabo import IMOSSTabPFN
 
         return (
-            IMABOTabPFN(
-                search_space=land.search_space,
-                seed=seed,
-                tabpfn_model=tabpfn_model,
+            IMOSSTabPFN(
+                land.search_space,
                 beta=BETA,
+                seed=seed,
+                model=tabpfn_model,
                 n_estimators=4,
             ),
             False,
@@ -358,7 +351,7 @@ def run_all(
             for i in range(n_seeds)
         )
         if pending_tabpfn:
-            from imabo.tabpfn_optimizer import load_tabpfn
+            from imabo import load_tabpfn
 
             tabpfn_model = load_tabpfn()
             print("TabPFN ready (checkpoint cached; shared across seeds).")

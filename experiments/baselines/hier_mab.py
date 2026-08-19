@@ -51,8 +51,8 @@ from optuna.distributions import (
     IntDistribution,
 )
 
+from imabo import SearchSpace
 from imabo.memory import config_to_key, key_to_config
-from imabo.tpe import create_search_space
 
 
 def axis_values(dist, n_points: int) -> list[Any]:
@@ -141,7 +141,7 @@ class HierMAB:
             seed: RNG seed for the initial incumbent.
         """
         self.param_names = list(sorted(search_space.keys()))
-        self.distributions, _ = create_search_space(search_space)
+        self.distributions = SearchSpace(search_space).distributions
         self.rng = np.random.default_rng(seed)
 
         self.values: dict[str, list[Any]] = {

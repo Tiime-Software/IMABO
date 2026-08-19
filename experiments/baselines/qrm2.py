@@ -21,7 +21,7 @@ UCB-AIR / MOSS-AIR's effective 0.5 (QRM2 opens far fewer arms: ~t^0.35 vs
 
 Same generator interface as the other baselines (suggest / observe /
 best_config).  Rewards are assumed normalised to [0,1] by the caller.  The inner
-index is the repo's `moss_anytime` (identical to MOSS-AIR's), invoked with the
+index is the repo's `anytime_moss_index` (identical to MOSS-AIR's), invoked with the
 fixed phase horizon t_r as its step counter so it behaves as fixed-horizon MOSS.
 The recommendation is the arm with the best *lifetime* empirical mean (across all
 phases), among arms pulled at least once.
@@ -39,8 +39,7 @@ from optuna.distributions import (
     IntDistribution,
 )
 
-from imabo.moss import moss_anytime
-from imabo.tpe import create_search_space
+from imabo import SearchSpace, anytime_moss_index
 
 
 class _Arm:
@@ -66,7 +65,7 @@ class QRM2:
     def __init__(self, search_space: dict[str, Any], alpha: float = 0.347,
                  seed: int | None = 42):
         self.param_names = sorted(search_space.keys())
-        self.distributions, _ = create_search_space(search_space)
+        self.distributions = SearchSpace(search_space).distributions
         self.alpha = alpha
         self.rng = np.random.default_rng(seed)
 
@@ -121,11 +120,11 @@ class QRM2:
             k = len(self.arms)
             arm = max(
                 self.arms,
-                key=lambda a: moss_anytime(
-                    mean_reward=a.mean_ph,
+                key=lambda a: anytime_moss_index(
+                    a.mean_ph,
+                    n_pulls=a.n_ph,
                     n_arms=k,
-                    step_counter=self.phase_horizon,              # fixed-horizon MOSS
-                    nb_rewarded_arm=a.n_ph,
+                    t=self.phase_horizon,  # fixed-horizon MOSS
                 ),
             )
         self._pending = arm

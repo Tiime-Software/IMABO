@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from experiments.benchmarks.delayed.delay_model import DelayModel
-from imabo.types import ArmConfig
+from imabo import ArmConfig
 
 
 def _active_set_size(optimizer: Any) -> int:
@@ -145,10 +145,8 @@ def run_delayed(
     feedback delayed/censored per `delay_model`.
 
     `optimizer` must be an IMABO-family instance: delivery of a delayed
-    reward is done via `optimizer.memory.observe(config, reward)` directly
-    (a public method on the `Memory` ABC, `imabo/memory.py`), since it can
-    record a reward against an arbitrary earlier config -- unlike
-    `optimizer.observe(reward)`, which only supports the most recently
+    reward is done via `optimizer.observe(reward, config=...)`, which records a
+    reward against an arbitrary earlier config rather than the most recently
     suggested one. `bench` follows this repo's benchmark duck-type:
     `bench(x, noise=True) -> float`, `bench.regret(x) -> float`.
     """
@@ -214,7 +212,7 @@ def run_delayed(
         step_rewards: list[float] = []
         while heap and heap[0].arrival_step <= step:
             pending = heapq.heappop(heap)
-            optimizer.memory.observe(pending.config, pending.reward)
+            optimizer.observe(pending.reward, config=pending.config)
             step_rewards.append(pending.reward)
             arrived += 1
 

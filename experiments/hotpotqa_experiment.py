@@ -20,7 +20,7 @@ model-agnostic and shared by the TabFM and TabPFN figures):
         --plot-algorithms IMOSS-TABPFN IMOSS-mutate-KLxTPE
 
 ``IMOSS-TABPFN`` is the tuned TabPFN oracle specified by winning_configs.pdf
-(the IMABOTabPFN class defaults: mutation candidate pool, refit_every=1,
+(the TabPFNOracle defaults: mutation candidate pool, refit_every=1,
 quantile 0.975). Two more oracle arms run the same way:
 
     # the tuned surrogate-free oracle: KL-UCB coordinate bandit + univariate TPE
@@ -71,9 +71,16 @@ from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.hotpotqa.benchmark import HotpotQABenchmark
 from experiments.benchmarks.hotpotqa.types import Result
-from imabo import IMABO, IMABOCoordUCB, IMABOTabFM, IMABOTabPFN
-from imabo.optimizer import load_tabfm
-from imabo.tabpfn_optimizer import load_tabpfn
+from imabo import (
+    IMOSSTPE,
+    CandidatePool,
+    IMOSSMutateKLTPE,
+    IMOSSRandom,
+    IMOSSTabFM,
+    IMOSSTabPFN,
+    load_tabfm,
+    load_tabpfn,
+)
 
 memory = Memory(location=Path(__file__).parents[1] / "data" / ".cache", verbose=0)
 
@@ -92,12 +99,12 @@ class Algorithm(Enum):
     # labelled "IMABO"/"IMABO-noTPE" on disk.
     IMOSS_TPE = "IMOSS-TPE"  # full method: TPE explore + MOSS exploit
     RANDOM = "Random"  # true uniform random search (RandomSearch)
-    IMOSS_RANDOM = "IMOSS-Random"  # ablation: MOSS-only (IMABO with use_tpe=False)
+    IMOSS_RANDOM = "IMOSS-Random"  # ablation: MOSS allocation, uniform oracle
     OPTUNA = "Optuna"  # sequential TPE with k-observation averaging
     UCB_AIR = "UCB-AIR"  # infinitely-many-armed bandit, arm-increasing rule + UCBV
     IMOSS_TABFM = "IMOSS-TABFM"  # IMOSS-TABFM
     # IMOSS with a TabPFN-3 explore oracle, in the tuned configuration
-    # winning_configs.pdf specifies (which is what IMABOTabPFN now defaults to):
+    # winning_configs.pdf specifies (which is what TabPFNOracle now defaults to):
     # a mutation candidate pool with a local Gaussian step, refit_every=1 and
     # the 0.975 quantile.
     IMOSS_TABPFN = "IMOSS-TABPFN"
@@ -114,10 +121,10 @@ class Algorithm(Enum):
 
 # Arms backed by TabPFN. The checkpoint must be warmed ONCE up front: loaded
 # lazily instead, worker threads race to load it and the process hard-crashes on
-# Apple-silicon MPS with no traceback (see imabo.tabpfn_optimizer).
+# Apple-silicon MPS with no traceback (see imabo.oracles.tabpfn_oracle).
 _TABPFN_ALGORITHMS = (Algorithm.IMOSS_TABPFN, Algorithm.IMOSS_TABPFN_UNTUNED)
 
-# Per-arm (acquisition, quantile) defaults: the tuned arm inherits IMABOTabPFN's
+# Per-arm (acquisition, quantile) defaults: the tuned arm inherits TabPFNOracle's
 # class defaults, the reference arm stays pinned to the old 0.99 quantile. The
 # CLI's --acquisition/--quantile override these; :func:`algo_label` then tags the
 # filenames so an override never overwrites the default run's results.
@@ -187,29 +194,29 @@ def build_optimizer(
     ``None`` means "this arm's default" (see :func:`tabpfn_settings`).
     """
     if algorithm == Algorithm.IMOSS_TPE:
-        return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=True, beta=beta)
+        return IMOSSTPE(SEARCH_SPACE, beta=beta, seed=seed)
     elif algorithm == Algorithm.IMOSS_RANDOM:
-        return IMABO(search_space=SEARCH_SPACE, seed=seed, use_tpe=False, beta=beta)
+        return IMOSSRandom(SEARCH_SPACE, beta=beta, seed=seed)
     elif algorithm == Algorithm.IMOSS_TABFM:
         model = tabfm_model if tabfm_model is not None else load_tabfm()
-        return IMABOTabFM(
-            search_space=SEARCH_SPACE,
-            seed=seed,
+        return IMOSSTabFM(
+            SEARCH_SPACE,
             beta=beta,
-            tabfm_model=model,
+            seed=seed,
+            model=model,
             suggest_method="max",
         )
     elif algorithm == Algorithm.IMOSS_TABPFN:
         model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
         acq, q = tabpfn_settings(algorithm, acquisition, quantile)
-        # The tuned oracle: everything not named here is an IMABOTabPFN default,
-        # and the class ships the tuned configuration (mutation candidate pool,
-        # mutation_scale 0.1, refit_every 1).
-        return IMABOTabPFN(
-            search_space=SEARCH_SPACE,
-            seed=seed,
+        # The tuned oracle: everything not named here is a TabPFNOracle default,
+        # and those defaults are the tuned configuration (mutation candidate pool,
+        # scale 0.1, refit_every 1).
+        return IMOSSTabPFN(
+            SEARCH_SPACE,
             beta=beta,
-            tabpfn_model=model,
+            seed=seed,
+            model=model,
             acquisition=acq,
             quantile=q,
         )
@@ -219,19 +226,18 @@ def build_optimizer(
         # The old reference configuration: a uniform candidate pool, the shipped
         # shortlist depth and the 0.99 quantile. Spelled out because the class
         # defaults are now the tuned configuration.
-        return IMABOTabPFN(
-            search_space=SEARCH_SPACE,
-            seed=seed,
+        return IMOSSTabPFN(
+            SEARCH_SPACE,
             beta=beta,
-            tabpfn_model=model,
-            candidate_source="uniform",
-            mutation_scale=None,
+            seed=seed,
+            model=model,
+            pool=CandidatePool(source="uniform", scale=None),
             refit_every=10,
             acquisition=acq,
             quantile=q,
         )
     elif algorithm == Algorithm.IMOSS_MUTATE_KLXTPE:
-        return IMABOCoordUCB(search_space=SEARCH_SPACE, seed=seed, beta=beta)
+        return IMOSSMutateKLTPE(SEARCH_SPACE, beta=beta, seed=seed)
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=SEARCH_SPACE, seed=seed)
     elif algorithm == Algorithm.OPTUNA:
@@ -788,7 +794,7 @@ def _parse_args() -> argparse.Namespace:
         choices=["ucb", "quantile"],
         default=None,
         help=(
-            "TabPFN-arm acquisition (see imabo.tabpfn_optimizer.IMABOTabPFN): "
+            "TabPFN-arm acquisition (see imabo.oracles.tabpfn_oracle.TabPFNOracle): "
             "'quantile' ranks candidates on the --quantile level of TabPFN's "
             "predictive distribution, 'ucb' on mean + kappa*std at "
             "kappa = Phi^-1(--quantile). Default: the arm's own setting "

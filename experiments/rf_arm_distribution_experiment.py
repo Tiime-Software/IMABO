@@ -43,10 +43,18 @@ from tqdm import tqdm
 from experiments.baselines.random_search import RandomSearch
 from experiments.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
-from imabo import IMABO, IMABOCoordUCB
-from imabo.memory import config_to_key
-from imabo.optimizer import IMABOTabFM, load_tabfm
-from imabo.tabpfn_optimizer import IMABOTabPFN, load_tabpfn
+from imabo import (
+    IMABO,
+    IMOSSTPE,
+    CandidatePool,
+    IMOSSMutateKLTPE,
+    IMOSSRandom,
+    IMOSSTabFM,
+    IMOSSTabPFN,
+    config_to_key,
+    load_tabfm,
+    load_tabpfn,
+)
 
 # Pick up TABPFN_TOKEN (PriorLabs license/API key) and friends from .env, as
 # the HotpotQA experiment already does for OPENROUTER_API_KEY.
@@ -144,68 +152,42 @@ def build_optimizer(
     tabpfn_model: Any = None,
 ):
     if algorithm == Algorithm.IMOSS_TPE:
-        return IMABO(
-            search_space=search_space,
-            seed=seed,
-            multivariate=True,
-            beta=BETA,
-        )
+        return IMOSSTPE(search_space, beta=BETA, seed=seed, multivariate=True)
     elif algorithm == Algorithm.IMOSS_TPE_UNI:
-        return IMABO(
-            search_space=search_space,
-            seed=seed,
-            multivariate=False,
-            beta=BETA,
-        )
+        return IMOSSTPE(search_space, beta=BETA, seed=seed, multivariate=False)
     elif algorithm == Algorithm.IMOSS:
-        return IMABO(
-            search_space=search_space,
-            seed=seed,
-            multivariate=True,
-            use_tpe=False,
-            beta=BETA,
-        )
+        return IMOSSRandom(search_space, beta=BETA, seed=seed)
     elif algorithm == Algorithm.RANDOM:
         return RandomSearch(search_space=search_space, seed=seed)
     elif algorithm == Algorithm.IMOSS_TABFM:
         model = tabfm_model if tabfm_model is not None else load_tabfm()
-        return IMABOTabFM(
-            search_space=search_space,
-            seed=seed,
-            tabfm_model=model,
-            beta=BETA,
-        )
+        return IMOSSTabFM(search_space, beta=BETA, seed=seed, model=model)
     elif algorithm == Algorithm.IMOSS_TABPFN:
         model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
         # The untuned baseline: a uniform candidate pool, the shipped shortlist
         # depth and the 0.99 quantile. Spelled out because the class defaults are
         # now the tuned configuration.
-        return IMABOTabPFN(
-            search_space=search_space,
-            seed=seed,
-            tabpfn_model=model,
+        return IMOSSTabPFN(
+            search_space,
             beta=BETA,
-            candidate_source="uniform",
-            mutation_scale=None,
+            seed=seed,
+            model=model,
+            pool=CandidatePool(source="uniform", scale=None),
             refit_every=10,
             quantile=0.99,
         )
     elif algorithm == Algorithm.IMOSS_TABPFN_TUNED:
         model = tabpfn_model if tabpfn_model is not None else load_tabpfn()
-        return IMABOTabPFN(
-            search_space=search_space,
-            seed=seed,
-            tabpfn_model=model,
+        return IMOSSTabPFN(
+            search_space,
             beta=BETA,
-            # Everything else is an IMABOTabPFN default: the class ships the
+            seed=seed,
+            model=model,
+            # Everything else is a TabPFNOracle default: those defaults are the
             # tuned configuration.
         )
     elif algorithm == Algorithm.IMOSS_MUTATE_KLXTPE:
-        return IMABOCoordUCB(
-            search_space=search_space,
-            seed=seed,
-            beta=BETA,
-        )
+        return IMOSSMutateKLTPE(search_space, beta=BETA, seed=seed)
     elif algorithm == Algorithm.UCB_AIR:
         return UCBAIR(
             search_space=search_space,
@@ -216,7 +198,7 @@ def build_optimizer(
 
 # Arms backed by TabPFN. The model must be warmed ONCE up front: it is loaded
 # lazily otherwise, and eight worker threads racing to load it hard-crashes the
-# process on Apple-silicon MPS with no traceback (see imabo.tabpfn_optimizer).
+# process on Apple-silicon MPS with no traceback (see imabo.oracles.tabpfn_oracle).
 _TABPFN_ALGORITHMS = (Algorithm.IMOSS_TABPFN, Algorithm.IMOSS_TABPFN_TUNED)
 
 
@@ -237,25 +219,18 @@ def _oracle_propose(shadow: Any) -> Any:
     `IMABO.suggest()` (imabo/optimizer.py) only consults the oracle --
     uniform random for plain IMOSS, the TPE Parzen estimator for IMOSS-TPE, the
     TabFM surrogate for IMOSS-TabFM -- while in its "explore" phase; once
-    `len(arms) >= t**beta` it switches to `suggest_existing`, a MOSS/UCB index
-    lookup over already-pulled arms (imabo/moss.py). That mixture is what the
+    `len(arms) >= t**beta` it switches to `AllocationPolicy.select`, a MOSS/UCB
+    index lookup over already-pulled arms (imabo/policies/). That mixture is what the
     *algorithm* suggests, not what the oracle itself would propose. Calling
     the oracle path directly here, every iteration regardless of phase, is
     what isolates "the distribution of the oracle every time it suggests an
     arm" from the exploit-driven convergence measured previously.
 
-    Bypassing suggest() also means memory.pull_arm() -- and therefore
-    step_counter/nb_pending -- is never touched (imabo/optimizer.py:163-164),
-    so this is even safer against state leakage than the previous
-    shadow.suggest() probe.
+    Bypassing suggest() also means memory.pull() -- and therefore the round
+    counter and the pending counts -- is never touched, so this is even safer
+    against state leakage than the previous shadow.suggest() probe.
     """
-    if not getattr(shadow, "use_tpe", False):
-        return shadow.generate_random_config()
-    state = shadow.memory.get_current_state()
-    rewarded_arms = shadow.get_rewarded_arms(state)
-    nb_pending_total = sum(s.nb_pending for s in state.arms.values())
-    nb_rewarded_total = sum(s.nb_rewarded for s in state.arms.values())
-    return shadow.suggest_new(state, rewarded_arms, nb_pending_total, nb_rewarded_total)
+    return shadow.propose()
 
 
 def _shadow_copy(opt: Any) -> Any:
@@ -263,19 +238,17 @@ def _shadow_copy(opt: Any) -> Any:
     suggest right now" probe, without deep-copying (or corrupting) heavy
     read-only attributes shared across instances.
 
-    IMABOTabFM's `_tabfm_model` is a single frozen pretrained model reused
-    across every run/budget (see run_experiment below); deep-copying its
-    weights on every one of thousands of iterations would be
-    both unnecessary (it's never mutated) and far too slow. Pre-seeding the
-    deepcopy memo with its id makes copy.deepcopy skip it and reuse the same
-    reference in the copy instead. IMABOTabPFN's `_tabpfn_model` (a small shared
-    settings dict) is skipped the same way, for parity.
+    TabFMOracle's `_model` is a single frozen pretrained model reused across every
+    run/budget (see run_experiment below); deep-copying its weights on every one of
+    thousands of iterations would be both unnecessary (it is never mutated) and far
+    too slow. Pre-seeding the deepcopy memo with its id makes copy.deepcopy skip it
+    and reuse the same reference in the copy instead. TabPFNOracle's `_model` (a
+    small shared settings dict) is skipped the same way, for parity.
     """
     memo = {}
-    for attr in ("_tabfm_model", "_tabpfn_model"):
-        model = getattr(opt, attr, None)
-        if model is not None:
-            memo[id(model)] = model
+    model = getattr(getattr(opt, "oracle", None), "_model", None)
+    if model is not None:
+        memo[id(model)] = model
     return copy.deepcopy(opt, memo)
 
 
@@ -303,7 +276,7 @@ def run_single_experiment(
     foundation-model oracle -- IMOSS-TabFM or IMOSS-TabPFN -- and keep the
     ``tabfm_*`` names verbatim so the plotting code reads both unchanged.
     ``fit_granularity`` / ``max_num_rows`` / ``acquisition`` / ``quantile``
-    only affect IMOSS-TabPFN (see :class:`imabo.tabpfn_optimizer.IMABOTabPFN`):
+    only affect IMOSS-TabPFN (see :class:`imabo.oracles.tabpfn_oracle.TabPFNOracle`):
     ``"arm"`` (default) fits one row per arm at its mean reward, ``"pull"``
     one row per individual pull (no averaging, KV-cache on); ``acquisition``
     is the ``quantile`` level of the predictive distribution (``"quantile"``,
@@ -311,11 +284,11 @@ def run_single_experiment(
     -- ``quantile`` is the single exploration knob for both.
     """
     if algorithm == Algorithm.IMOSS_TABFM:
-        opt = IMABOTabFM(
-            search_space=bench.get_search_space(),
-            seed=seed,
-            tabfm_model=tabfm_model,
+        opt = IMOSSTabFM(
+            bench.get_search_space(),
             beta=BETA,
+            seed=seed,
+            model=tabfm_model,
             suggest_method="max",
             n_estimators=4,
         )
@@ -326,11 +299,11 @@ def run_single_experiment(
             effective_max_rows = 10000 if fit_granularity == "pull" else 200
         else:
             effective_max_rows = max_num_rows
-        opt = IMABOTabPFN(
-            search_space=bench.get_search_space(),
-            seed=seed,
-            tabpfn_model=tabpfn_model,
+        opt = IMOSSTabPFN(
+            bench.get_search_space(),
             beta=BETA,
+            seed=seed,
+            model=tabpfn_model,
             n_estimators=4,
             fit_granularity=fit_granularity,
             max_num_rows=effective_max_rows,
@@ -350,7 +323,7 @@ def run_single_experiment(
     # UCB-AIR (experiments/baselines/ucb_air.py) has no oracle/exploit split --
     # it's kept in this experiment for the shared cumulative-regret comparison
     # only, so it's exempt from the oracle-proposal shadow probe below.
-    has_oracle = hasattr(opt, "generate_random_config")
+    has_oracle = isinstance(opt, IMABO)
 
     regrets = []
     simple_regret_trace = []
@@ -373,15 +346,15 @@ def run_single_experiment(
             shadow = _shadow_copy(opt)
 
             # Piggyback on the same N_SHADOW draws to also get TabFM's own
-            # predicted value for each one (see IMABOTabFM.on_suggestion) --
+            # predicted value for each one (see TabFMOracle.on_suggestion) --
             # collecting onto `shadow` only, never `opt`, so the real
             # trajectory stays uninstrumented. `on_suggestion` doesn't fire
-            # when suggest_new falls back to a random config (not enough
+            # when the oracle falls back to a random config (not enough
             # rewarded arms yet), which is all-or-nothing across these 10
             # draws since none of them mutate `shadow`'s state.
             probe_preds: list[tuple[Any, float, float]] = []
-            if hasattr(shadow, "on_suggestion"):
-                shadow.on_suggestion = (
+            if hasattr(shadow.oracle, "on_suggestion"):
+                shadow.oracle.on_suggestion = (
                     lambda config, mean_pred, max_pred: probe_preds.append(
                         (config, mean_pred, max_pred)
                     )
@@ -391,8 +364,8 @@ def run_single_experiment(
             # real TabFM fit among these draws -- for a pool-wide MSE (TabFM's
             # accuracy across the candidate space), not just at its picks.
             probe_pool: list[tuple[Any, float]] = []
-            if hasattr(shadow, "on_candidates_scored"):
-                shadow.on_candidates_scored = lambda cands, preds: probe_pool.extend(
+            if hasattr(shadow.oracle, "on_candidates_scored"):
+                shadow.oracle.on_candidates_scored = lambda cands, preds: probe_pool.extend(
                     zip(cands, preds)
                 )
 
@@ -419,16 +392,18 @@ def run_single_experiment(
                 )
 
                 # The reward labels TabFM actually fit on at this probe (one
-                # per distinct rewarded arm, the exact set _fit_surrogate
+                # per distinct rewarded arm, the exact set the oracle's fit
                 # uses -- see _oracle_propose). Logged raw and aligned 1:1
                 # with the suggestion probes above, to test whether the
                 # predicted-reward collapse tracks a downward drift in this
                 # training-label distribution as random exploration keeps
                 # adding mostly-mediocre arms.
-                shadow_state = shadow.memory.get_current_state()
-                shadow_rewarded_arms = shadow.get_rewarded_arms(shadow_state)
+                shadow_state = shadow.state
                 tabfm_train_rewards.append(
-                    [float(stats.mean_reward) for _, stats in shadow_rewarded_arms]
+                    [
+                        float(stats.mean_reward)
+                        for _, stats in IMABO.rewarded_arms(shadow_state)
+                    ]
                 )
 
             if probe_pool:

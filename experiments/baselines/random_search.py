@@ -17,8 +17,8 @@ from optuna.distributions import (
     IntDistribution,
 )
 
+from imabo import SearchSpace
 from imabo.memory import config_to_key, key_to_config
-from imabo.tpe import create_search_space
 
 
 class RandomSearch:
@@ -26,7 +26,7 @@ class RandomSearch:
 
     def __init__(self, search_space: dict[str, Any], seed: int | None = 42, **kwargs):
         self.param_names = list(sorted(search_space.keys()))
-        self.distributions, _ = create_search_space(search_space)
+        self.distributions = SearchSpace(search_space).distributions
         self.rng = random.Random(seed)
         # config-key -> list of observed rewards
         self._rewards: dict = defaultdict(list)

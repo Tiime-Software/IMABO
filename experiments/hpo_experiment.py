@@ -35,8 +35,13 @@ from experiments.benchmarks.hpo_bench.client import (
 )
 from experiments.benchmarks.hpo_wrapper import HPOBenchmark
 from experiments.utils.stats import calculate_statistics
-from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
-from imabo.tabpfn_optimizer import load_tabpfn
+from imabo import (
+    IMOSSTPE,
+    CandidatePool,
+    IMOSSMutateKLTPE,
+    IMOSSTabPFN,
+    load_tabpfn,
+)
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -94,11 +99,11 @@ def build_optimizer(
     dim = benchmark_obj.dim
     if algo == Algorithm.IMABO:
         return (
-            IMABO(
-                search_space=benchmark_obj.param_specs,
+            IMOSSTPE(
+                benchmark_obj.param_specs,
+                beta=beta,
                 seed=seed,
                 multivariate=True,
-                beta=beta,
             ),
             False,
         )
@@ -110,28 +115,27 @@ def build_optimizer(
         return TimedOptimizer(stroquool, n_iterations, dim), True
     if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
         return (
-            IMABOCoordUCB(search_space=benchmark_obj.param_specs, seed=seed, beta=beta),
+            IMOSSMutateKLTPE(benchmark_obj.param_specs, beta=beta, seed=seed),
             False,
         )
     if algo == Algorithm.IMOSS_TABPFN:
         return (
-            IMABOTabPFN(
-                search_space=benchmark_obj.param_specs,
-                seed=seed,
+            IMOSSTabPFN(
+                benchmark_obj.param_specs,
                 beta=beta,
-                tabpfn_model=_tabpfn_model(),
+                seed=seed,
+                model=_tabpfn_model(),
             ),
             False,
         )
     if algo == Algorithm.IMOSS_TABPFN_UNTUNED:
         return (
-            IMABOTabPFN(
-                search_space=benchmark_obj.param_specs,
-                seed=seed,
-                tabpfn_model=_tabpfn_model(),
+            IMOSSTabPFN(
+                benchmark_obj.param_specs,
                 beta=beta,
-                candidate_source="uniform",
-                mutation_scale=None,
+                seed=seed,
+                model=_tabpfn_model(),
+                pool=CandidatePool(source="uniform", scale=None),
                 refit_every=10,
                 quantile=0.99,
             ),

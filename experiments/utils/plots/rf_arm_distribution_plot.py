@@ -665,7 +665,7 @@ def plot_tabfm_suggestion_error_grid(
     and the true reward for the configs it actually suggests (the N_SHADOW=10
     shadow-probe picks at that checkpoint -- see
     rf_arm_distribution_experiment.run_single_experiment and
-    IMABOTabFM.on_suggestion), logged on the fixed oracle_probe_every
+    TabFMOracle.on_suggestion), logged on the fixed oracle_probe_every
     schedule. This is the picks-only counterpart to
     plot_tabfm_candidate_mse_grid (which averages over the whole pool). Only
     IMOSS-TabFM logs this field.
@@ -695,7 +695,7 @@ def plot_tabfm_candidate_mse_grid(
     and the true reward over the *whole* scored candidate pool (all
     n_candidates from the real TabFM fit at that probe -- see
     rf_arm_distribution_experiment.run_single_experiment and
-    IMABOTabFM.on_candidates_scored), not just the chosen config. It measures
+    TabFMOracle.on_candidates_scored), not just the chosen config. It measures
     TabFM's accuracy across the candidate space, logged on the fixed
     oracle_probe_every schedule. Only IMOSS-TabFM logs this field.
     """

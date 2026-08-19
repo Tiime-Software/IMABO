@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from frozendict import frozendict
 
@@ -23,6 +24,28 @@ class CurrentState:
 
     nb_steps: int
     arms: frozendict[ArmKey, ArmStats]
+
+
+class Decision(NamedTuple):
+    """One explore step of a mutation oracle: which coordinate produced which arm.
+
+    ``credited`` is what this decision has already contributed to the oracle's
+    coordinate bandit, so a revision adjusts by the difference instead of voting
+    twice.
+    """
+
+    coord: int
+    arm_key: ArmKey
+    parent_key: ArmKey
+    credited: float | None = None
+
+
+class CoordCredits(NamedTuple):
+    """A coordinate bandit's counters: pulls, reward totals, and its own clock."""
+
+    n: list[float]
+    total: list[float]
+    t: int
 
 
 def config_to_key(config: ArmConfig, param_names: list[str]) -> ArmKey:
@@ -70,7 +93,11 @@ class Memory(ABC):
 
 
 class InMemoryStorage(Memory):
-    """Dict-based in-memory storage."""
+    """Dict-based in-memory storage.
+
+    Implements the `Memory` contract, then adds the blocks that specific oracles of
+    this package read -- see the comment before them at the end of the class.
+    """
 
     def __init__(self, param_names: list[str]):
         self.memory: dict[ArmKey, ArmStats] = {}
@@ -81,6 +108,11 @@ class InMemoryStorage(Memory):
         # every arm on every step previously made this O(K^2) per step.
         self._total_rewarded: int = 0
         self._total_pending: int = 0
+        # Backing store for the oracle blocks at the end of this class. Empty and
+        # untouched unless an oracle that needs them is in use.
+        self._rewards: dict[ArmKey, list[float]] = {}
+        self._decisions: list[Decision] = []
+        self._coord_credits: CoordCredits | None = None
 
     def set(self, key: ArmKey, stats: ArmStats) -> None:
         if key in self.memory:
@@ -127,3 +159,44 @@ class InMemoryStorage(Memory):
         if stats.nb_pending > 0:
             stats.nb_pending -= 1
             self._total_pending -= 1
+        self._rewards.setdefault(key, []).append(float(reward))
+
+    # ------------------------------------------------------------------
+    # Below: not part of the `Memory` contract.
+    #
+    # These serve specific oracles of this package, named for each one. A custom
+    # backend needs a block only if it is paired with that oracle, and the oracle
+    # says so and fails loudly when the block is missing. Nothing in `Memory`, in
+    # `IMABO` or in the policies reads any of it.
+    # ------------------------------------------------------------------
+
+    # For every oracle that needs the individual rewards rather than their mean:
+    # `MutateKLTPEOracle` (its arm means) and `TabPFNOracle(fit_granularity="pull")`
+    # (one training row per pull).
+
+    def get_rewards(self, key: ArmKey) -> list[float]:
+        """Individual rewards observed for a configuration, in arrival order."""
+        return self._rewards.get(key, [])
+
+    # For `MutateKLTPEOracle` only: the decisions it has taken, and the credits of
+    # the bandit it runs over coordinates.
+
+    def add_decision(self, decision: Decision) -> None:
+        """Record which coordinate produced which arm, from which parent."""
+        self._decisions.append(decision)
+
+    def get_decisions(self) -> list[Decision]:
+        """Every recorded decision, in the order it was made."""
+        return self._decisions
+
+    def save_decisions(self, decisions: list[Decision]) -> None:
+        """Replace the recorded decisions, whose credits have been revised."""
+        self._decisions = list(decisions)
+
+    def get_coord_credits(self) -> CoordCredits | None:
+        """The coordinate bandit's counters, or None if it never saved any."""
+        return self._coord_credits
+
+    def save_coord_credits(self, credits: CoordCredits) -> None:
+        """Store the coordinate bandit's counters."""
+        self._coord_credits = credits
