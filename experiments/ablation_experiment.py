@@ -1,7 +1,7 @@
 """
 Ablation study: two sub-experiments from the paper.
 
-1. TPE oracle impact — IMABO vs Random (use_tpe=False) across dims 1/3/5/7/10.
+1. TPE oracle impact — IMOSS-TPE vs IMOSS-Random across dims 1/3/5/7/10.
    Fixed budget T=3000, functions: sin1, garland, quadratic. 10 runs.
 
 2. MOSS oracle / k impact — IMABO vs OptunaBandit with varying k values.
@@ -26,7 +26,7 @@ from experiments.utils.stats import (
     save_iterations_to_csv,
     save_results_to_csv,
 )
-from imabo import IMABO
+from imabo import IMOSSTPE, IMOSSRandom
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "ablation_experiment"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -67,21 +67,12 @@ def run_single(
     rng = np.random.default_rng(seed)
 
     if optimizer_type == "random_suggest":
-        opt = IMABO(
-            search_space=search_space,
-            seed=seed,
-            use_tpe=False,
-            beta=beta,
-        )
+        opt = IMOSSRandom(search_space, beta=beta, seed=seed)
         suggest_fn = opt.suggest
         observe_fn = opt.observe
         best_x_fn = lambda: opt.best_x  # noqa: E731
     elif optimizer_type == "imabo":
-        opt = IMABO(
-            search_space=search_space,
-            seed=seed,
-            beta=beta,
-        )
+        opt = IMOSSTPE(search_space, beta=beta, seed=seed)
         suggest_fn = opt.suggest
         observe_fn = opt.observe
         best_x_fn = lambda: opt.best_x  # noqa: E731

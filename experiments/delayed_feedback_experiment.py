@@ -1,7 +1,7 @@
 """Delayed and censored reward experiment.
 
-Does IMABO's delay-aware switching rule (`switch_strategy="delayed"`, see
-`imabo/moss.py`'s `moss_anytime`) actually help when reward feedback arrives
+Does IMABO's delay-aware switching rule (`IMOSS(delayed=True)`, see
+`imabo/policies/imoss.py`'s `anytime_moss_index`) actually help when reward feedback arrives
 late or never arrives at all, compared to a delay-oblivious IMABO exposed to
 the same delayed environment, and to a no-delay skyline?
 
@@ -29,7 +29,7 @@ from experiments.benchmarks.delayed.simulator import (
     run_baseline,
     run_delayed,
 )
-from imabo import IMABO
+from imabo import IMABO, IMOSS, TPEOracle
 
 # ---------------------------------------------------------------- benchmark
 # Two reward surfaces for the delayed experiment, each with a runtime-driven
@@ -150,7 +150,7 @@ def build_optimizer(algorithm: Algorithm, search_space: dict, seed: int):
     rf_arm_distribution_experiment.py).
 
     IMABO_NAIVE and IMABO_NO_DELAY deliberately share the exact same optimizer
-    config (switch_strategy="beta"); this is NOT a redundant double-run. They
+    config (`IMOSS(delayed=False)`); this is NOT a redundant double-run. They
     differ in the *environment* they are run in, which is what each is meant to
     measure (see run_single_experiment):
         - IMABO_NAIVE   -> run_delayed:  the delay-blind optimizer exposed to
@@ -158,25 +158,23 @@ def build_optimizer(algorithm: Algorithm, search_space: dict, seed: int):
         - IMABO_NO_DELAY-> run_baseline: the same optimizer with instant feedback
                           -> the no-delay skyline (best achievable, upper bound).
     Same code, different simulator, different regret trace -- so both are needed;
-    they cannot be collapsed into one run. IMABO_DELAYED (switch_strategy=
-    "delayed") is the delay-aware rule whose whole point is to recover the
-    NO_DELAY skyline while running in the same delayed environment as NAIVE.
+    they cannot be collapsed into one run. IMABO_DELAYED (IMOSS(delayed=True)) is
+    the delay-aware rule whose whole point is to recover the NO_DELAY skyline while
+    running in the same delayed environment as NAIVE.
     """
     if algorithm == Algorithm.IMABO_DELAYED:
         return IMABO(
-            search_space=search_space,
+            search_space,
+            IMOSS(beta=BETA, delayed=True),
+            TPEOracle(multivariate=True),
             seed=seed,
-            multivariate=True,
-            beta=BETA,
-            switch_strategy="delayed",
         )
     elif algorithm in (Algorithm.IMABO_NAIVE, Algorithm.IMABO_NO_DELAY):
         return IMABO(
-            search_space=search_space,
+            search_space,
+            IMOSS(beta=BETA),
+            TPEOracle(multivariate=True),
             seed=seed,
-            multivariate=True,
-            beta=BETA,
-            switch_strategy="beta",
         )
     elif algorithm == Algorithm.UCB_AIR:
         return UCBAIR(search_space=search_space, seed=seed, beta=BETA)

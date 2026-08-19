@@ -1,5 +1,3 @@
-"""TPE (Tree-structured Parzen Estimator) oracle for IMABO."""
-
 import math
 from typing import Any, Callable
 
@@ -7,15 +5,22 @@ import numpy as np
 from optuna.distributions import (
     BaseDistribution,
     CategoricalDistribution,
-    FloatDistribution,
-    IntDistribution,
-)
-from optuna.samplers._tpe.parzen_estimator import (
-    _ParzenEstimator,
-    _ParzenEstimatorParameters,
 )
 
-from imabo.types import ArmConfig, OptunaConfigs
+try:
+    from optuna.samplers._tpe.parzen_estimator import (
+        _ParzenEstimator,
+        _ParzenEstimatorParameters,
+    )
+except ImportError as error:  # pragma: no cover
+    raise ImportError(
+        "imabo's TPE oracles use Optuna's Parzen estimator, which lives in the "
+        "private module optuna.samplers._tpe.parzen_estimator and has moved in this "
+        "Optuna version. Pin a tested release (see pyproject.toml) or open an issue."
+    ) from error
+
+from imabo.memory import ArmStats
+from imabo.types import ArmConfig, ArmKey, OptunaConfigs
 
 CategoricalDistanceFunc = Callable[[Any, Any], float]
 
@@ -88,36 +93,6 @@ def adaptive_categorical_distance_func(
     }
 
 
-def create_search_space(
-    search_space_specs: dict,
-) -> tuple[dict[str, BaseDistribution], dict[str, str]]:
-    """Create Optuna search space from domain"""
-    distributions: dict[str, BaseDistribution] = {}
-    param_types: dict[str, str] = {}
-
-    for name, spec in search_space_specs.items():
-        lower = spec.get("lower")
-        upper = spec.get("upper")
-        if lower is not None and upper is not None:
-            if spec.get("int", False):
-                distributions[name] = IntDistribution(
-                    low=lower, high=upper, log=spec.get("log", False)
-                )
-                param_types[name] = "integer"
-            else:
-                distributions[name] = FloatDistribution(
-                    low=lower, high=upper, log=spec.get("log", False)
-                )
-                param_types[name] = "continuous"
-        elif spec.get("choices"):
-            distributions[name] = CategoricalDistribution(choices=spec["choices"])
-            param_types[name] = "categorical"
-        else:
-            raise ValueError(f"Invalid parameter specification for '{name}': {spec}")
-
-    return distributions, param_types
-
-
 def configs_to_optuna(
     configs: list[ArmConfig],
     param_names: list[str],
@@ -153,6 +128,37 @@ def optuna_to_configs(
             )
         configs.append(config)
     return configs
+
+
+
+def fit_parzen(
+    observations: OptunaConfigs,
+    distributions: dict[str, BaseDistribution],
+    prior_weight: float,
+    weights_func: Callable,
+    multivariate: bool,
+    categorical_distance_func: dict[str, CategoricalDistanceFunc] | None,
+) -> _ParzenEstimator:
+    """Fit one Parzen density over ``observations``.
+
+    The single place imabo touches Optuna's private ``_ParzenEstimator``. Keeping the
+    three call sites behind one function means a future Optuna release that moves or
+    changes it is a one-function fix rather than a hunt; ``tests/test_optuna.py``
+    pins both the symbol and its numerical output so such a change fails in CI
+    rather than in a user's run.
+    """
+    return _ParzenEstimator(
+        observations=observations,
+        search_space=distributions,
+        parameters=_ParzenEstimatorParameters(
+            prior_weight=prior_weight,
+            consider_magic_clip=True,
+            consider_endpoints=True,
+            weights=weights_func,
+            multivariate=multivariate,
+            categorical_distance_func=categorical_distance_func,
+        ),
+    )
 
 
 def tpe_suggest(
@@ -208,26 +214,19 @@ def tpe_suggest(
     if categorical_distance_func is None:
         categorical_distance_func = adaptive_categorical_distance_func(distributions)
 
-    parzen_params = _ParzenEstimatorParameters(
-        prior_weight=prior_weight,
-        consider_magic_clip=True,
-        consider_endpoints=True,
-        weights=weights_func,
-        multivariate=multivariate,
-        categorical_distance_func=categorical_distance_func,
-    )
+    def fit(observations: OptunaConfigs, space) -> _ParzenEstimator:
+        return fit_parzen(
+            observations,
+            space,
+            prior_weight,
+            weights_func,
+            multivariate,
+            categorical_distance_func,
+        )
 
     if multivariate:
-        parzen_l = _ParzenEstimator(
-            observations=good_obs,
-            search_space=distributions,
-            parameters=parzen_params,
-        )
-        parzen_g = _ParzenEstimator(
-            observations=bad_obs,
-            search_space=distributions,
-            parameters=parzen_params,
-        )
+        parzen_l = fit(good_obs, distributions)
+        parzen_g = fit(bad_obs, distributions)
 
         candidates_dict = parzen_l.sample(rng, n_candidates)
         candidates = optuna_to_configs(candidates_dict, param_names, distributions)
@@ -247,16 +246,8 @@ def tpe_suggest(
         log_g = np.zeros(n_candidates)
         for name in param_names:
             dist = {name: distributions[name]}
-            parzen_l = _ParzenEstimator(
-                observations={name: good_obs[name]},
-                search_space=dist,
-                parameters=parzen_params,
-            )
-            parzen_g = _ParzenEstimator(
-                observations={name: bad_obs[name]},
-                search_space=dist,
-                parameters=parzen_params,
-            )
+            parzen_l = fit({name: good_obs[name]}, dist)
+            parzen_g = fit({name: bad_obs[name]}, dist)
             samples = parzen_l.sample(rng, n_candidates)
             candidates_dict[name] = samples[name]
             log_l += parzen_l.log_pdf(samples)
@@ -307,23 +298,21 @@ def univariate_tpe_sampler(
     if categorical_distance_func is None:
         categorical_distance_func = adaptive_categorical_distance_func(search_space)
 
-    parzen_params = _ParzenEstimatorParameters(
-        prior_weight=prior_weight,
-        consider_magic_clip=True,
-        consider_endpoints=True,
-        weights=weights_func,
+    parzen_l = fit_parzen(
+        configs_to_optuna(good_configs, [name], search_space),
+        search_space,
+        prior_weight,
+        weights_func,
         multivariate=False,
         categorical_distance_func=categorical_distance_func,
     )
-    parzen_l = _ParzenEstimator(
-        observations=configs_to_optuna(good_configs, [name], search_space),
-        search_space=search_space,
-        parameters=parzen_params,
-    )
-    parzen_g = _ParzenEstimator(
-        observations=configs_to_optuna(bad_configs, [name], search_space),
-        search_space=search_space,
-        parameters=parzen_params,
+    parzen_g = fit_parzen(
+        configs_to_optuna(bad_configs, [name], search_space),
+        search_space,
+        prior_weight,
+        weights_func,
+        multivariate=False,
+        categorical_distance_func=categorical_distance_func,
     )
 
     def draw(n_candidates: int, rng: np.random.RandomState) -> list:
@@ -370,3 +359,19 @@ def univariate_tpe_values(
         weights_func,
         categorical_distance_func,
     )(n_candidates, rng)
+
+
+def split_good_bad(
+    rewarded_arms: list[tuple[ArmKey, ArmStats]],
+    score: Callable[[ArmKey], float],
+    gamma_func: Callable[[int], int],
+) -> tuple[list[tuple[ArmKey, ArmStats]], list[tuple[ArmKey, ArmStats]]]:
+    """Split rewarded arms into 'good' and 'bad' sets, ranked by ``score``.
+
+    A free function rather than a method: both the global TPE oracle and the
+    coordinate one fit their densities on this same split, and neither is a
+    special case of the other.
+    """
+    sorted_arms = sorted(rewarded_arms, key=lambda arm: score(arm[0]), reverse=True)
+    n_good = max(1, min(gamma_func(len(sorted_arms)), len(sorted_arms) - 1))
+    return sorted_arms[:n_good], sorted_arms[n_good:]

@@ -1,7 +1,7 @@
 # Delayed / censored feedback experiment
 
-Does IMABO's delay-aware switching rule (`switch_strategy="delayed"`, see
-`imabo/moss.py`) actually help when reward feedback arrives late or never
+Does IMABO's delay-aware switching rule (`IMOSS(delayed=True)`, see
+`imabo/policies/imoss.py`) actually help when reward feedback arrives late or never
 arrives at all, compared to a delay-oblivious IMABO exposed to the same
 delayed environment, and to a no-delay skyline?
 
@@ -47,7 +47,7 @@ onto a min-heap keyed by arrival step. At every step, the loop:
    flows through the same expiry path). This ordering matters: checking
    arrival first would deliver an already-expired pull instead of censoring
    it.
-4. Pop and `optimizer.memory.observe(config, reward)` every remaining
+4. Pop and `optimizer.observe(reward, config=config)` every remaining
    observation whose arrival step has passed.
 
 `run_baseline` is the synchronous comparison loop (suggest -> evaluate ->
@@ -64,7 +64,7 @@ positive delays at all (e.g. `feedback_freq=0`).
 
 ## Algorithms compared
 
-| Algorithm | `switch_strategy` | Simulator loop | Measures |
+| Algorithm | `IMOSS(delayed=...)` | Simulator loop | Measures |
 |---|---|---|---|
 | **IMABO-Delayed** | `"delayed"` | `run_delayed` | the delay-aware correction, in the harsh environment |
 | **IMABO-Naive** | `"beta"` | `run_delayed` | the cost of ignoring delay (same optimizer as NoDelay) |

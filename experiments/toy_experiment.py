@@ -22,8 +22,7 @@ from experiments.utils.stats import (
     save_iterations_to_csv,
     save_results_to_csv,
 )
-from imabo import IMABO, IMABOCoordUCB, IMABOTabPFN
-from imabo.tabpfn_optimizer import load_tabpfn
+from imabo import IMOSSTPE, IMOSSMutateKLTPE, IMOSSTabPFN, load_tabpfn
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -84,7 +83,7 @@ def _build_optimizer(
     the native domain."""
     if algo == Algorithm.IMABO:
         return (
-            IMABO(search_space=search_space, seed=seed, multivariate=True, beta=beta),
+            IMOSSTPE(search_space, beta=beta, seed=seed, multivariate=True),
             False,
         )
     if algo == Algorithm.STOSOO:
@@ -94,14 +93,14 @@ def _build_optimizer(
     if algo == Algorithm.STROQUOOL:
         return TimedOptimizer(stroquool, n_iterations, dim), True
     if algo == Algorithm.IMOSS_MUTATE_KLXTPE:
-        return IMABOCoordUCB(search_space=search_space, seed=seed, beta=beta), False
+        return IMOSSMutateKLTPE(search_space, beta=beta, seed=seed), False
     if algo == Algorithm.IMOSS_TABPFN_TUNED:
         return (
-            IMABOTabPFN(
-                search_space=search_space,
-                seed=seed,
+            IMOSSTabPFN(
+                search_space,
                 beta=beta,
-                tabpfn_model=_tabpfn_model(),
+                seed=seed,
+                model=_tabpfn_model(),
             ),
             False,
         )

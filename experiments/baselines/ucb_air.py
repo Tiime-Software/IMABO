@@ -44,7 +44,7 @@ from optuna.distributions import (
     IntDistribution,
 )
 
-from imabo.tpe import create_search_space
+from imabo import SearchSpace
 
 
 class _Arm:
@@ -90,7 +90,7 @@ class UCBAIR:
             seed: RNG seed for drawing reservoir arms.
         """
         self.param_names = sorted(search_space.keys())
-        self.distributions, _ = create_search_space(search_space)
+        self.distributions = SearchSpace(search_space).distributions
         self.beta = beta
         self.rng = np.random.default_rng(seed)
 
@@ -199,16 +199,13 @@ class MOSSAIR(UCBAIR):
         if unpulled:
             arm = unpulled[0]
         else:
-            from imabo.moss import moss_anytime
+            from imabo import anytime_moss_index
 
             k = len(self.arms)
             arm = max(
                 self.arms,
-                key=lambda a: moss_anytime(
-                    mean_reward=a.mean,
-                    n_arms=k,
-                    step_counter=self.t,
-                    nb_rewarded_arm=a.n,
+                key=lambda a: anytime_moss_index(
+                    a.mean, n_pulls=a.n, n_arms=k, t=self.t
                 ),
             )
         self._pending = arm
