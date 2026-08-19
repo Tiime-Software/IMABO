@@ -710,7 +710,7 @@ def make_plots(
     # (multivariate=False) has stored runs but is not part of the paper figure.
     regret_algos = [
         "IMOSS-Random",
-        "IMOSS-TPE",
+        # "IMOSS-TPE",
         "IMOSS-mutate-KLxTPE",
         fm_label,
         "UCB-AIR",
@@ -718,7 +718,7 @@ def make_plots(
     ]
     oracle_algos = [
         "IMOSS-Random",
-        "IMOSS-TPE",
+        # "IMOSS-TPE",
         "IMOSS-mutate-KLxTPE",
         fm_label,
     ]
