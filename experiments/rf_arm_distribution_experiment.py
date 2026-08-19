@@ -629,8 +629,8 @@ def make_plots(
 ) -> None:
     """Draw the paper's RF figures for one foundation-model oracle: the static
     reward-landscape structure grid (benchmark-only), the combined
-    cumulative-regret + oracle-proposal-quality grid, and the surrogate
-    suggested-config MSE grid.
+    cumulative-regret + oracle-proposal-quality grid, the surrogate
+    suggested-config MSE grid, and the surrogate candidate-pool MSE grid.
 
     ``foundation`` selects the foundation-model series ("tabfm" or "tabpfn");
     the three surrogate-free baselines are shared by both figures. For "tabpfn"
@@ -645,6 +645,7 @@ def make_plots(
 
     matplotlib.use("Agg")
     from experiments.utils.plots.rf_arm_distribution_plot import (
+        _load_candidate_mse_traces,
         _load_suggestion_mse_traces,
         _plot_suggestion_metric_grid,
         plot_regret_and_oracle_grid,
@@ -686,7 +687,7 @@ def make_plots(
         "IMOSS-Random",
         "IMOSS-TPE",
         "IMOSS-mutate-KLxTPE",
-        # fm_label,
+        fm_label,
         "UCB-AIR",
         "Hier-MAB",
     ]
@@ -694,7 +695,7 @@ def make_plots(
         "IMOSS-Random",
         "IMOSS-TPE",
         "IMOSS-mutate-KLxTPE",
-        # fm_label,
+        fm_label,
     ]
 
     print("Generating RF reward-landscape structure grid (benchmark-only)...")
@@ -718,6 +719,20 @@ def make_plots(
         _load_suggestion_mse_traces,
         f"{'TabPFN' if is_tabpfn else 'TabFM'} Suggested-Config MSE",
         f"{foundation}_suggestion_mse_grid{suffix}",
+        benchmarks=benchmarks,
+        n_iterations=n_iterations,
+        save_fig=save_fig,
+        log_scale=True,
+        # Only this figure's foundation-model series: the loader also picks
+        # up the acquisition-sweep variant runs, which must not be drawn.
+        algorithms=[fm_label],
+    )
+
+    print(f"Generating {foundation} candidate-pool MSE grid...")
+    _plot_suggestion_metric_grid(
+        _load_candidate_mse_traces,
+        f"{'TabPFN' if is_tabpfn else 'TabFM'} Candidate-Pool MSE",
+        f"{foundation}_candidate_mse_grid{suffix}",
         benchmarks=benchmarks,
         n_iterations=n_iterations,
         save_fig=save_fig,

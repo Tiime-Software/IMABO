@@ -35,7 +35,13 @@ from experiments.benchmarks.hpo_bench.client import (
 )
 from experiments.benchmarks.hpo_wrapper import HPOBenchmark
 from experiments.utils.stats import calculate_statistics
-from imabo import IMOSSTPE, IMOSSMutateKLTPE, IMOSSTabPFN, load_tabpfn
+from imabo import (
+    IMOSSTPE,
+    CandidatePool,
+    IMOSSMutateKLTPE,
+    IMOSSTabPFN,
+    load_tabpfn,
+)
 
 RESULT_DIR = Path(__file__).parent.parent / "results"
 RESULT_DIR.mkdir(exist_ok=True)
@@ -57,9 +63,10 @@ class Algorithm(Enum):
     # values per axis (HierMAB's axis_values does exactly this for log axes).
     HIER_MAB_10 = "Hier-MAB-10"
     HIER_MAB_100 = "Hier-MAB-100"
-    # The two tuned explore oracles -- see winning_configs.pdf.
+
     IMOSS_MUTATE_KLXTPE = "IMOSS-mutate-KLxTPE"
-    IMOSS_TABPFN_TUNED = "IMOSS-TabPFN-tuned"
+    IMOSS_TABPFN = "IMOSS-TabPFN"
+    IMOSS_TABPFN_UNTUNED = "IMOSS-TabPFN-untuned"
 
 
 class RegretData(TypedDict):
@@ -111,13 +118,26 @@ def build_optimizer(
             IMOSSMutateKLTPE(benchmark_obj.param_specs, beta=beta, seed=seed),
             False,
         )
-    if algo == Algorithm.IMOSS_TABPFN_TUNED:
+    if algo == Algorithm.IMOSS_TABPFN:
         return (
             IMOSSTabPFN(
                 benchmark_obj.param_specs,
                 beta=beta,
                 seed=seed,
                 model=_tabpfn_model(),
+            ),
+            False,
+        )
+    if algo == Algorithm.IMOSS_TABPFN_UNTUNED:
+        return (
+            IMOSSTabPFN(
+                benchmark_obj.param_specs,
+                beta=beta,
+                seed=seed,
+                model=_tabpfn_model(),
+                pool=CandidatePool(source="uniform", scale=None),
+                refit_every=10,
+                quantile=0.99,
             ),
             False,
         )
@@ -149,9 +169,7 @@ async def run_single_experiment(
     regrets: dict[str, RegretData] = {}
     for algo in algorithms:
         opt_name = algo.value
-        ckpt = (
-            CKPT_DIR / f"{benchmark}_{n_iterations}iters_seed{seed}_{opt_name}.json"
-        )
+        ckpt = CKPT_DIR / f"{benchmark}_{n_iterations}iters_seed{seed}_{opt_name}.json"
         if ckpt.exists():
             with open(ckpt) as f:
                 regrets[opt_name] = json.load(f)
@@ -337,9 +355,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    # No nest_asyncio here: applying it patches the event loop in a way that
-    # makes every aiohttp request fail on Python >= 3.12 ("Timeout context
-    # manager should be used inside a task"), which wait_for_server's bare
-    # except then misreports as "server not up". Run as a plain script there
-    # are no nested event loops to enable.
     asyncio.run(main())

@@ -34,9 +34,11 @@ _APPENDIX_PANEL_W_IN = 4.2  # per-benchmark panel width
 _APPENDIX_PANEL_H_IN = 3.4  # per-panel height (before legend headroom)
 
 
-def _appendix_style(columns: int = 1, max_legend_single_row: int = 3):
+def _appendix_style(
+    columns: int = 1, max_legend_single_row: int = 3, conference: str = "aaai"
+):
     return paper_style(
-        "aaai",
+        conference,
         columns=columns,
         title_fontsize=20,
         label_fontsize=18,
@@ -60,7 +62,9 @@ def _appendix_legend_rect_top(n_legend_rows: int) -> float:
     return 1.0 - (0.55 * n_legend_rows) / fig_h
 
 
-def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", columns=1):
+def plot_multiple_trajectories(
+    benchmarks, save_fig=False, exp_type="toy", columns=1, conference="aaai"
+):
     """
     Plot performance trajectories with confidence ellipses for multiple toy
     benchmarks -- appendix figure, styled like
@@ -75,6 +79,7 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", colum
         exp_type: Experiment type for filename
         columns: 1 (single text column) or 2 (full text width / AAAI
             `figure*`) -- see plot_configs.paper_figure_width_in.
+        conference: Which conference's column widths to use (default "aaai").
     """
     n_benchmarks = len(benchmarks)
 
@@ -88,7 +93,9 @@ def plot_multiple_trajectories(benchmarks, save_fig=False, exp_type="toy", colum
 
     # Force the legend onto one row -- at this panel width (n * 4.2in) even
     # several entries fit comfortably on one line.
-    style = _appendix_style(columns, max_legend_single_row=len(algorithms))
+    style = _appendix_style(
+        columns, max_legend_single_row=len(algorithms), conference=conference
+    )
     n_rows = style.n_legend_rows(len(algorithms))
 
     fig, axes = plt.subplots(

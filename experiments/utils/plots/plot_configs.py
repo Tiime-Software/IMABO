@@ -129,10 +129,13 @@ ALGORITHM_STYLES: dict[str, tuple[str, str]] = {
     # Continuous LR/SVM comparison: Hier-MAB run at two geometric-grid
     # resolutions (10 vs 100 values per axis). They co-occur with each other
     # (and with HOO-T's blue) but never with plain "Hier-MAB", so the 10-point
-    # variant keeps the family's purple/star; the 100-point one takes the
-    # remaining Wong color (sky blue) with its own marker.
+    # variant keeps the family's purple/star. The 100-point one originally took
+    # the remaining Wong color (sky blue), but that figure now also includes
+    # "IMOSS-mutate-KLxTPE" (sky, assigned for the RF figure where Hier-MAB-100
+    # never appears) -- with both in the same lr/svm grid the sky-blue lines
+    # were indistinguishable, so this one takes gray/neutral instead.
     "Hier-MAB-10": (_PALETTE_PURPLE, "*"),  # lr/svm (factored, 10-pt grid)
-    "Hier-MAB-100": (_PALETTE_SKY, "X"),  # lr/svm (factored, 100-pt grid)
+    "Hier-MAB-100": (RESEARCH_COLORS["neutral"], "X"),  # lr/svm (factored, 100-pt grid)
     # Counter-example landscapes: Hier-MAB at two grid resolutions in one
     # figure. One family color (purple) for both -- the same method at
     # different resolutions -- disambiguated by marker plus a per-level
@@ -280,15 +283,18 @@ PAPER_LEGEND_FONTSIZE = 8
 
 
 def legend_ncol_for_columns(
-    n_labels: int, columns: int, max_single_row: int = 3
+    n_labels: int, columns: int, max_single_row: int = 3, max_single_row_wide: int = 6
 ) -> int:
     """Legend column count for a paper_figure_width_in-sized figure: at
     columns=2 (a figure*) there's usually enough width for every entry on one
-    row; at columns=1 there usually isn't, so entries beyond max_single_row
-    wrap onto a second row instead of squeezing (and shrinking the rest of
-    the figure to make room for) one very wide legend row.
+    row up to `max_single_row_wide`; beyond that (e.g. a 7+-algorithm
+    comparison) it wraps too, just at a higher threshold than columns=1's
+    `max_single_row`. At columns=1 entries beyond max_single_row wrap onto a
+    second row instead of squeezing (and shrinking the rest of the figure to
+    make room for) one very wide legend row.
     """
-    if columns == 2 or n_labels <= max_single_row:
+    cap = max_single_row_wide if columns == 2 else max_single_row
+    if n_labels <= cap:
         return n_labels
     return -(-n_labels // 2)  # ceil(n_labels / 2) -> 2 rows
 
@@ -354,10 +360,14 @@ class PaperStyle:
     capthick: float = 1.0
 
     max_legend_single_row: int = 3
+    max_legend_single_row_wide: int = 6
 
     def legend_ncol(self, n_labels: int) -> int:
         return legend_ncol_for_columns(
-            n_labels, self.columns, self.max_legend_single_row
+            n_labels,
+            self.columns,
+            self.max_legend_single_row,
+            self.max_legend_single_row_wide,
         )
 
     def n_legend_rows(self, n_labels: int) -> int:
