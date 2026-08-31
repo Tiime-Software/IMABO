@@ -22,7 +22,7 @@ from pathlib import Path
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from experiments.baselines.ucb_air import UCBAIR
+from imabo.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.delayed.delay_model import RuntimeDelayModel
 from experiments.benchmarks.delayed.simulator import (
     patience_for_quantile,

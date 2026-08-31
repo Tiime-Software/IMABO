@@ -65,10 +65,10 @@ from tenacity import (
 )
 from tqdm import tqdm
 
-from experiments.baselines.hier_mab import HierMAB
-from experiments.baselines.optuna_bandit import OptunaBandit
-from experiments.baselines.random_search import RandomSearch
-from experiments.baselines.ucb_air import UCBAIR
+from imabo.baselines.hier_mab import HierMAB
+from imabo.baselines.optuna_bandit import OptunaBandit
+from imabo.baselines.random_search import RandomSearch
+from imabo.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.hotpotqa.benchmark import HotpotQABenchmark
 from experiments.benchmarks.hotpotqa.types import Result
 from imabo import (

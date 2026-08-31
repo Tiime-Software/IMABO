@@ -10,7 +10,10 @@ from typing import Any, Optional
 
 import numpy as np
 import optuna
+from optuna.distributions import CategoricalDistribution, IntDistribution
 from optuna.samplers import TPESampler
+
+from imabo.search_space import SearchSpace
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -26,7 +29,14 @@ class OptunaBandit:
         **kwargs,
     ):
         self.param_specs = search_space
-        self.param_names = list(sorted(search_space.keys()))
+        # A dict, a suggestion function, or a ready-made SearchSpace: the same forms
+        # IMABO accepts.
+        self.space = (
+            search_space
+            if isinstance(search_space, SearchSpace)
+            else SearchSpace(search_space)
+        )
+        self.param_names = self.space.names
         self.k = k
         self.config: Optional[dict[str, Any]] = None
         self.current_trial: Optional[optuna.Trial] = None
@@ -47,18 +57,20 @@ class OptunaBandit:
             self.current_trial = trial
             self.config = {}
             for name in self.param_names:
-                spec = self.param_specs[name]
-                if spec.get("choices"):
-                    self.config[name] = trial.suggest_categorical(name, spec["choices"])
-                elif spec.get("int", False):
+                distribution = self.space.distributions[name]
+                if isinstance(distribution, CategoricalDistribution):
+                    self.config[name] = trial.suggest_categorical(
+                        name, distribution.choices
+                    )
+                elif isinstance(distribution, IntDistribution):
                     self.config[name] = trial.suggest_int(
-                        name, int(spec["lower"]), int(spec["upper"]),
-                        log=spec.get("log", False),
+                        name, distribution.low, distribution.high,
+                        step=distribution.step, log=distribution.log,
                     )
                 else:
                     self.config[name] = trial.suggest_float(
-                        name, spec["lower"], spec["upper"],
-                        log=spec.get("log", False),
+                        name, distribution.low, distribution.high,
+                        step=distribution.step, log=distribution.log,
                     )
         return self.config
 
@@ -73,6 +85,11 @@ class OptunaBandit:
             self.current_trial = None
             self.config = None
             self.current_observations = []
+
+    @property
+    def best_config(self):
+        """The configuration to report, under the name every optimizer here uses."""
+        return self.suggest_best()
 
     def suggest_best(self) -> Optional[dict[str, Any]]:
         """Return the best configuration found so far."""
