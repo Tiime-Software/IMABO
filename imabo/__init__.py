@@ -1,5 +1,17 @@
 """IMABO: Infinite Multi-Armed Bandits with Oracles."""
 
+from imabo.baselines import (
+    MOSSAIR,
+    QRM2,
+    UCBAIR,
+    HierMAB,
+    OptunaBandit,
+    RandomSearch,
+    TimedOptimizer,
+    hoo_t,
+    stosoo,
+    stroquool,
+)
 from imabo.imabo import IMABO
 from imabo.memory import (
     ArmStats,
@@ -43,6 +55,16 @@ from imabo.search_space import SearchSpace, Trial
 from imabo.types import ArmConfig, ArmKey
 
 __all__ = [
+    "stroquool",
+    "stosoo",
+    "hoo_t",
+    "TimedOptimizer",
+    "RandomSearch",
+    "QRM2",
+    "OptunaBandit",
+    "HierMAB",
+    "UCBAIR",
+    "MOSSAIR",
     "Decision",
     "CoordCredits",
     # The framework

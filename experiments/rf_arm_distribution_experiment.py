@@ -40,8 +40,8 @@ from dotenv import load_dotenv
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from experiments.baselines.random_search import RandomSearch
-from experiments.baselines.ucb_air import UCBAIR
+from imabo.baselines.random_search import RandomSearch
+from imabo.baselines.ucb_air import UCBAIR
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
 from imabo import (
     IMABO,
@@ -320,7 +320,7 @@ def run_single_experiment(
     # the shared ``tabfm_*`` field names).
     is_surrogate = algorithm in (Algorithm.IMOSS_TABFM, Algorithm.IMOSS_TABPFN)
 
-    # UCB-AIR (experiments/baselines/ucb_air.py) has no oracle/exploit split --
+    # UCB-AIR (imabo/baselines/ucb_air.py) has no oracle/exploit split --
     # it's kept in this experiment for the shared cumulative-regret comparison
     # only, so it's exempt from the oracle-proposal shadow probe below.
     has_oracle = isinstance(opt, IMABO)

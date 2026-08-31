@@ -198,7 +198,7 @@ def stosoo(n, dim: int, k=None, h_max=None, delta=None):
         return child not in evals[child.depth]
 
     def leaves(h):
-        return [l for l in evals[h] if is_leaf(l)]
+        return [e for e in evals[h] if is_leaf(e)]
 
     def get_eval(node):
         return evals[node.depth][node]
@@ -319,6 +319,11 @@ class TimedOptimizer:
                 val = e.value
                 self._best_x = lambda: val
             self.done = True
+
+    @property
+    def best_config(self):
+        """The point to report, under the name every optimizer here uses."""
+        return self.suggest_best()
 
     def suggest_best(self):
         return self._best_x()

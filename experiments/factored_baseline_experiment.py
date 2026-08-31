@@ -38,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from experiments.baselines.hier_mab import HierMAB
+from imabo.baselines.hier_mab import HierMAB
 from experiments.benchmarks.rf_tabular_bandit import RFTabularFiniteBenchmark
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "factored_baseline"

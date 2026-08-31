@@ -19,12 +19,20 @@ SpaceFunction = Callable[["Trial"], None]
 def _draw(distribution: BaseDistribution, rng: random.Random) -> Any:
     """Draw one value from a parameter's own marginal of ``P0``."""
     if isinstance(distribution, FloatDistribution):
+        if distribution.step is not None:
+            # A stepped axis is a grid: draw one of its points uniformly.
+            n = int(round((distribution.high - distribution.low) / distribution.step))
+            return distribution.low + distribution.step * rng.randint(0, n)
         if distribution.log:
             return math.exp(
                 rng.uniform(math.log(distribution.low), math.log(distribution.high))
             )
         return rng.uniform(distribution.low, distribution.high)
     if isinstance(distribution, IntDistribution):
+        if distribution.step != 1:
+            return rng.randrange(
+                distribution.low, distribution.high + 1, distribution.step
+            )
         # Integers are drawn uniformly even on a log-scaled axis, matching the
         # sampler this replaces.
         return rng.randint(distribution.low, distribution.high)
@@ -56,31 +64,37 @@ class Trial:
 
     def __init__(self, rng: random.Random):
         self._rng = rng
-        self.declared: dict[str, BaseDistribution] = {}
-        self.values: ArmConfig = {}
+        self.distributions: dict[str, BaseDistribution] = {}
+        self.params: ArmConfig = {}
 
     def suggest_float(
-        self, name: str, low: float, high: float, *, log: bool = False
+        self,
+        name: str,
+        low: float,
+        high: float,
+        *,
+        step: float | None = None,
+        log: bool = False,
     ) -> float:
-        return self._suggest(name, FloatDistribution(low, high, log=log))
+        return self._suggest(name, FloatDistribution(low, high, log=log, step=step))
 
     def suggest_int(
-        self, name: str, low: int, high: int, *, log: bool = False
+        self, name: str, low: int, high: int, *, step: int = 1, log: bool = False
     ) -> int:
-        return self._suggest(name, IntDistribution(low, high, log=log))
+        return self._suggest(name, IntDistribution(low, high, log=log, step=step))
 
     def suggest_categorical(self, name: str, choices: list[Any]) -> Any:
         return self._suggest(name, CategoricalDistribution(choices))
 
     def _suggest(self, name: str, distribution: BaseDistribution) -> Any:
-        declared = self.declared.get(name)
+        declared = self.distributions.get(name)
         if declared is not None and declared != distribution:
             raise ValueError(
                 f"{name!r} was suggested twice with different bounds in one call"
             )
-        self.declared[name] = distribution
+        self.distributions[name] = distribution
         value = _draw(distribution, self._rng)
-        self.values[name] = value
+        self.params[name] = value
         return value
 
 
@@ -135,7 +149,7 @@ class SearchSpace:
             # from the run's own stream.
             probe = Trial(random.Random(0))
             self._call(probe)
-            self.distributions = probe.declared
+            self.distributions = probe.distributions
         else:
             self.distributions = _distributions_from_spec(space)
 
@@ -163,14 +177,14 @@ class SearchSpace:
             return {name: self.sample_value(name, rng) for name in self.names}
         trial = Trial(rng)
         self._call(trial)
-        if trial.declared != self.distributions:
+        if trial.distributions != self.distributions:
             raise ValueError(
                 "the space function declared different parameters than it did on the "
                 "first call. A parameter that exists only on some branch is a "
                 "conditional space, which is not supported yet: every call must "
                 f"declare {sorted(self.distributions)} with the same bounds."
             )
-        return trial.values
+        return trial.params
 
     def sample_value(self, name: str, rng: random.Random) -> Any:
         """Draw one parameter from its own marginal of ``P0``."""
@@ -192,7 +206,7 @@ class SearchSpace:
                 "set of parameters it suggested. Assign the suggested values to local "
                 "variables if you need them, and drop the return."
             )
-        if not trial.declared:
+        if not trial.distributions:
             raise ValueError("the space function suggested no parameter")
 
 

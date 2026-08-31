@@ -201,19 +201,6 @@ The oracles keep nothing of their own -- whatever they accumulate lives in the m
 so a restarted process resumes as soon as your `Memory` reloads. Nothing has to be saved
 around a crash.
 
-Two oracles need more than the six methods above, and say so:
-
-| Oracle | Also reads |
-|---|---|
-| `RandomOracle`, `TPEOracle`, `TabFMOracle` | nothing; the contract above is enough |
-| `TabPFNOracle(fit_granularity="pull")` | `get_rewards` |
-| `MutateKLTPEOracle` | `get_rewards`, `add_decision`, `get_decisions`, `save_decisions`, `get_coord_credits`, `save_coord_credits` |
-
-Those live on `InMemoryStorage`, not on `Memory`: the contract every backend implements
-stays free of anything oracle-specific. Add the block your oracle needs, and only that
-one -- `setup` raises and names what is missing rather than degrading quietly. The
-payloads are `Decision` and `CoordCredits`, both plain named tuples, each one a table row.
-
 ## Writing Your Own Instantiation
 
 An oracle is one method. `suggest` is handed everything any oracle could need -- the
@@ -258,6 +245,45 @@ Both are bound to the run by `setup`, which gives them the search space and the 
 shared RNG; neither may draw from it during `setup` except to seed an initial design.
 Override `AllocationPolicy.score` to change how oracles rank the active set, and
 `AllocationPolicy.best_arm` to change what the optimizer reports.
+
+## Baselines
+
+The baselines the paper compares against ship with the library and drive the same loop as
+`IMABO` — `suggest()`, then `observe(reward)`, with `best_config` for the configuration to
+report:
+
+```python
+from imabo import IMABO, QRM2, UCBAIR, RandomSearch
+
+for optimizer in (IMABO(space), QRM2(space), UCBAIR(space), RandomSearch(space)):
+    for _ in range(1000):
+        config = optimizer.suggest()
+        optimizer.observe(serve(config))
+    print(optimizer.best_config)
+```
+
+| Baseline | What it is |
+|---|---|
+| `RandomSearch` | Uniform draws from `P0`. |
+| `QRM2` | QRM2 (Roy Chaudhuri & Kalyanakrishnan): MOSS on a growing pool, restarted on a doubling schedule. |
+| `UCBAIR`, `MOSSAIR` | UCB-AIR (Wang, Audibert & Munos), with the Arm-Increasing Rule; `MOSSAIR` swaps in the MOSS index. |
+| `HierMAB` | Hier-MAB, the two-level hierarchical bandit of AutoRAG-HP (Fu et al., EMNLP Findings 2024). |
+| `OptunaBandit` | A k-averaging wrapper around Optuna's TPE sampler. |
+| `stroquool`, `stosoo`, `hoo_t` | The tree-search bandits, as generators over the unit cube; drive them through `TimedOptimizer`. |
+
+The tree-search algorithms are exported as the generators they have always been —
+`stroquool`, `stosoo`, `hoo_t` — plus the `TimedOptimizer` wrapper. They work on
+`[0, 1]**d` rather than on a search space, so mapping their coordinates to configurations
+is the caller's job, exactly as the paper's experiments do it:
+
+```python
+from imabo import TimedOptimizer, stosoo
+
+optimizer = TimedOptimizer(stosoo, budget, dim)
+while not optimizer.done:
+    x = optimizer.suggest()                  # a point of [0, 1]**dim
+    optimizer.observe(x, serve(to_config(x)))
+```
 
 ## Reproducing Paper Experiments
 
@@ -320,61 +346,6 @@ docker compose up hpo-server
 
 This builds a container with a Python 3.7 conda env and the vendored `HPOBench/` source, and exposes it on `localhost:8901`. A `dev` service with the same image is also available for interactive use (`docker compose run dev`).
 
-### Baselines implemented (`experiments/baselines/`)
-
-- `stroquool.py` — StoSOO, HOO-T, StroquOOL, Sequool (tree-based continuous bandits) + `TimedOptimizer` wrapper.
-- `optuna_bandit.py` — `OptunaBandit`, a k-averaging wrapper around Optuna's TPE sampler.
-- `random_search.py` — uniform random search.
-- `ucb_air.py` — UCB-AIR (Wang, Audibert & Munos), infinitely-many-armed bandit with the Arm-Increasing Rule.
-- `hier_mab.py` — Hier-MAB, the two-level hierarchical bandit from AutoRAG-HP (Fu et al., EMNLP Findings 2024).
-
-## Repository Layout
-
-```
-imabo/                              # core IMABO package
-  imabo.py                          # IMABO -- the framework, Algorithm 1
-  policy.py                         # AllocationPolicy (abstract)
-  oracle.py                         # Oracle (abstract)
-  memory.py                         # Memory interface, InMemoryStorage, ArmStats/CurrentState
-  search_space.py                   # SearchSpace and Trial: the baseline P0, encode/decode
-  types.py                          # ArmKey, ArmConfig
-  policies/
-    imoss.py                        # IMOSS + the anytime MOSS index
-    budgeted_ucb.py                 # BudgetedUCB (fixed horizon, not in the paper)
-  oracles/
-    parzen.py                       # Parzen estimators, gamma/weight functions, good/bad split
-    random_oracle.py                # RandomOracle
-    tpe_oracle.py                   # TPEOracle
-    mutate_kl_tpe_oracle.py         # MutateKLTPEOracle + the KL-UCB coordinate bandit
-    candidate_pool.py               # CandidatePool + mutation primitives
-    tabpfn_oracle.py                # TabPFNOracle
-    tabfm_oracle.py                 # TabFMOracle (not in the paper)
-experiments/
-  toy_experiment.py                  # toy benchmark comparison
-  hpo_experiment.py                  # real HPO benchmark comparison (needs Docker server)
-  rf_arm_distribution_experiment.py  # arm-choice distribution incl. foundation-model oracles
-  ablation_experiment.py             # TPE oracle + k-impact ablations
-  delayed_feedback_experiment.py     # delayed/censored reward experiment
-  hotpotqa_experiment.py             # HotpotQA online-HPO experiment
-  factored_baseline_experiment.py    # Hier-MAB on the discrete RF grid
-  coordination_barrier_experiment.py # synthetic factored-method counterexamples
-  reward_structure_analysis.py       # offline reward-landscape diagnostics
-  baselines/                        # StoSOO/HOO-T/Stroquool, OptunaBandit, Random, UCB-AIR, Hier-MAB
-  benchmarks/
-    config.py                       # BENCHMARKS dict (param specs, fidelity, metrics)
-    hpo_wrapper.py                  # HPOBenchmark client (array_to_config, eval_config, …)
-    toys/                           # sin1, garland, rastrigin objective functions
-    hpo_bench/                      # HTTP server (Docker) + async client for HPOBench
-    delayed/                        # LCBench / NAS-Bench-201 bandits, delay simulator, one-time setup scripts
-    hotpotqa/                       # HotpotQA benchmark, embeddings, metrics
-  utils/
-    stats.py                        # calculate_statistics, CSV save helpers
-    plots/                          # one plotting module per experiment, shared plot_configs.py (Wong palette, paper style)
-results/                             # generated CSVs and PDFs (git-ignored)
-HPOBench/                            # vendored HPOBench source (installed in the Docker image)
-Dockerfile
-docker-compose.yml
-```
 
 ## Tests
 

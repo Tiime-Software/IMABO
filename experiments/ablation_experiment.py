@@ -19,7 +19,7 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from experiments.baselines.optuna_bandit import OptunaBandit
+from imabo.baselines.optuna_bandit import OptunaBandit
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.utils.stats import (
     calculate_statistics,
