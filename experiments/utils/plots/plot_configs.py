@@ -54,6 +54,7 @@ DISPLAY_NAME_OVERRIDES = {
     "IMABO": "IMOSS-TPE",
     "I-MOSS-TPE": "IMOSS-TPE",
     "Stroquool": "StroquOOL",
+    "IMOSS-mutate-KLxTPE": "IMOSS-mutate-KLxPE",
 }
 
 
@@ -388,11 +389,12 @@ class PaperStyle:
         ax.spines["right"].set_visible(False)
 
     def legend(
-        self, fig, handles, labels, *, n_labels: int | None = None, bbox_y=None
+        self, fig, handles, labels, *, n_labels: int | None = None, bbox_y=None,
+        **legend_kw,
     ) -> int:
         """Add the shared top legend, wrapped for this target's width, and
         return the number of legend rows (so the caller can reserve headroom
-        in tight_layout)."""
+        in tight_layout). `legend_kw` forwards to create_figure_legend."""
         n = len(labels) if n_labels is None else n_labels
         rows = self.n_legend_rows(n)
         if bbox_y is None:
@@ -404,6 +406,7 @@ class PaperStyle:
             ncol=self.legend_ncol(n),
             bbox_y=bbox_y,
             fontsize=self.legend_fontsize,
+            **legend_kw,
         )
         return rows
 
@@ -455,12 +458,18 @@ def create_figure_legend(
     bbox_y: float = 1.08,
     fontsize: float | None = None,
     loc: str = "upper center",
+    **legend_kw,
 ) -> None:
     """Add a legend to `fig`, anchored at (0.5, bbox_y) via `loc` (default
     "upper center": bbox_y is the legend's top edge, for the usual shared-top-
     legend placement). Pass loc="center" with a bbox_y computed from an actual
     Axes position (see plot_regret_and_oracle_grid) to center a second legend
-    inside a reserved gap between subplot rows instead."""
+    inside a reserved gap between subplot rows instead.
+
+    `legend_kw` goes straight to `fig.legend`, for the spacing knobs a wide
+    single-row legend needs to stay inside the target print width without
+    dropping the shared font size: `handlelength`, `columnspacing`,
+    `handletextpad` (see plot_combined_regrets_grid)."""
     if fontsize is None:
         fig_width, _ = fig.get_size_inches()
         fontsize = np.clip(
@@ -475,6 +484,7 @@ def create_figure_legend(
         ncol=ncol,
         frameon=False,
         prop={"size": fontsize, "family": "serif", "weight": "bold"},
+        **legend_kw,
     )
 
 

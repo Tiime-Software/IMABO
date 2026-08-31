@@ -659,7 +659,19 @@ def plot_combined_regrets_grid(
             algorithm found in each benchmark's CSV).
     """
     n_bench = len(benchmarks)
-    style = paper_style(conference=conference, columns=columns, markevery_divisor=10)
+    # max_legend_single_row raised from the default 3: legend_ncol_for_columns
+    # treats columns=1 as "narrow", but for a single-column VENUE (arxiv 6.5in,
+    # neurips 5.5in) columns=1 is the full text width -- as wide as AAAI's
+    # figure* -- so the whole legend fits on one row there. Verified for this
+    # figure's 6 series at arxiv width: the rendered legend stays inside
+    # width_in, so bbox_inches="tight" does not grow the saved PDF (which would
+    # shrink every font once embedded at width=\linewidth).
+    style = paper_style(
+        conference=conference,
+        columns=columns,
+        markevery_divisor=10,
+        max_legend_single_row=6,
+    )
 
     # Peek at the first benchmark's algorithm count so the figure can be
     # sized to fit the legend from the start (see plot_regret_and_oracle_grid
@@ -801,12 +813,23 @@ def plot_combined_regrets_grid(
     # legend for 4+ algorithms is wider than the target width, and
     # bbox_inches="tight" (below) would grow the saved PDF to fit it,
     # silently shrinking every font when later embedded at width=\linewidth.
+    # handlelength/columnspacing/handletextpad below the matplotlib defaults
+    # (2.0/2.0/0.8): with max_legend_single_row raised so all 6 series sit on
+    # one row, the default handles and gaps push the legend past width_in
+    # (measured 6.76in in a 6.5in figure), and bbox_inches="tight" then grows
+    # the PDF to ~6.99in -- which shrinks every font by ~7% once embedded at
+    # width=\linewidth. Trimming the handles and gaps buys back the width
+    # without touching legend_fontsize, which stays at the value shared with
+    # every other paper figure.
     style.legend(
         fig,
         legend_handles,
         legend_labels,
         n_labels=n_algorithms,
         bbox_y=1.0 if n_legend_rows == 1 else 1.02,
+        handlelength=1.4,
+        columnspacing=1.0,
+        handletextpad=0.5,
     )
 
     plt.tight_layout(

@@ -752,7 +752,7 @@ def make_plot(
         f"({', '.join(display_overrides[fm] for fm in fm_labels)})..."
     )
     plot_hotpotqa_results(
-        algorithms=[mutate_tpe, *fm_labels, ucb, rnd, hier],
+        algorithms=[rnd, hier, mutate_tpe, *fm_labels],
         n_samples=n_samples,
         n_runs=n_runs,
         save_fig=True,

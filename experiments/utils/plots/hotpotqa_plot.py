@@ -25,11 +25,10 @@ ALGO_DISPLAY_NAMES = {
     "IMABO-noTPE": "IMOSS",
     "IMOSS-TABFM": "IMOSS-TabFM",
     "IMOSS-TABPFN": "IMOSS-TabPFN",
+    "IMOSS-mutate-KLxTPE": "IMOSS-mutate-KLxPE",
     "IMOSS-TABPFN-untuned": "IMOSS-TabPFN (untuned)",
-    "UCB-AIR": "UCB-AIR",
 }
 
-_IMABO_FAMILY = ["IMABO", "IMABO-noTPE"]
 
 # Below this physical width, plot_hotpotqa_results' two panels stack
 # vertically instead of sitting side by side (see the `stacked` comment
@@ -384,12 +383,12 @@ def plot_config_analysis(
 if __name__ == "__main__":
     beta_08_dir = RESULTS_DIR / "beta_0.8"
     algorithms = [
+        "Random",
+        "Hier-MAB",
         "IMOSS-TPE-beta0.5",
         "IMOSS-TABPFN-beta0.5",
         "IMOSS-mutate-KLxTPE-beta0.5",
-        "UCB-AIR-beta0.5",
-        "Random",
-        "Hier-MAB",
+        # "UCB-AIR-beta0.5",
     ]
     dirs = None
     display_overrides = {
