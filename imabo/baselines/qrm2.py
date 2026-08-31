@@ -39,7 +39,8 @@ from optuna.distributions import (
     IntDistribution,
 )
 
-from imabo import SearchSpace, anytime_moss_index
+from imabo.policies.imoss import anytime_moss_index
+from imabo.search_space import SearchSpace
 
 
 class _Arm:
@@ -64,8 +65,15 @@ class _Arm:
 class QRM2:
     def __init__(self, search_space: dict[str, Any], alpha: float = 0.347,
                  seed: int | None = 42):
-        self.param_names = sorted(search_space.keys())
-        self.distributions = SearchSpace(search_space).distributions
+        # A dict, a suggestion function, or a ready-made SearchSpace: the same forms
+        # IMABO accepts.
+        self.space = (
+            search_space
+            if isinstance(search_space, SearchSpace)
+            else SearchSpace(search_space)
+        )
+        self.param_names = self.space.names
+        self.distributions = self.space.distributions
         self.alpha = alpha
         self.rng = np.random.default_rng(seed)
 

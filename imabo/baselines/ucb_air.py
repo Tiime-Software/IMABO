@@ -44,7 +44,7 @@ from optuna.distributions import (
     IntDistribution,
 )
 
-from imabo import SearchSpace
+from imabo.search_space import SearchSpace
 
 
 class _Arm:
@@ -89,8 +89,15 @@ class UCBAIR:
             ucb_c: multiplier on the UCB bonus sqrt(2 log t / n).
             seed: RNG seed for drawing reservoir arms.
         """
-        self.param_names = sorted(search_space.keys())
-        self.distributions = SearchSpace(search_space).distributions
+        # A dict, a suggestion function, or a ready-made SearchSpace: the same forms
+        # IMABO accepts.
+        self.space = (
+            search_space
+            if isinstance(search_space, SearchSpace)
+            else SearchSpace(search_space)
+        )
+        self.param_names = self.space.names
+        self.distributions = self.space.distributions
         self.beta = beta
         self.rng = np.random.default_rng(seed)
 
@@ -132,7 +139,7 @@ class UCBAIR:
         target = self._target_num_arms(self.t)
         while len(self.arms) < target:
             cfg = self._draw_config()
-            key = tuple((n, cfg[n]) for n in self.param_names)
+            key = self.space.encode(cfg)
             if key in self._seen_keys:
                 continue
             self._seen_keys.add(key)

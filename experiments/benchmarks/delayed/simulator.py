@@ -29,7 +29,7 @@ def _active_set_size(optimizer: Any) -> int:
 
     Duck-typed: IMABO-family optimizers expose `.memory.memory` (an
     `InMemoryStorage` dict, see `imabo/memory.py`), but UCB-AIR
-    (`experiments/baselines/ucb_air.py`) has no `.memory` at all -- it keeps
+    (`imabo/baselines/ucb_air.py`) has no `.memory` at all -- it keeps
     its own active set in `.arms`.
     """
     memory = getattr(optimizer, "memory", None)

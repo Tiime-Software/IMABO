@@ -51,8 +51,8 @@ from optuna.distributions import (
     IntDistribution,
 )
 
-from imabo import SearchSpace
 from imabo.memory import config_to_key, key_to_config
+from imabo.search_space import SearchSpace
 
 
 def axis_values(dist, n_points: int) -> list[Any]:
@@ -140,8 +140,15 @@ class HierMAB:
             alpha_low: exploration multiplier of the per-axis value bandits.
             seed: RNG seed for the initial incumbent.
         """
-        self.param_names = list(sorted(search_space.keys()))
-        self.distributions = SearchSpace(search_space).distributions
+        # A dict, a suggestion function, or a ready-made SearchSpace: the same forms
+        # IMABO accepts.
+        self.space = (
+            search_space
+            if isinstance(search_space, SearchSpace)
+            else SearchSpace(search_space)
+        )
+        self.param_names = self.space.names
+        self.distributions = self.space.distributions
         self.rng = np.random.default_rng(seed)
 
         self.values: dict[str, list[Any]] = {

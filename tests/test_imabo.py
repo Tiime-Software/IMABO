@@ -9,22 +9,31 @@ from imabo import (
     IMABO,
     IMOSS,
     KLUCB,
+    MOSSAIR,
+    QRM2,
+    UCBAIR,
     AllocationPolicy,
     ArmStats,
     BudgetedUCB,
     CandidatePool,
     CurrentState,
+    HierMAB,
     InMemoryStorage,
     Memory,
     MutateKLTPEOracle,
+    OptunaBandit,
     Oracle,
     RandomOracle,
+    RandomSearch,
     SearchSpace,
     TabPFNOracle,
+    TimedOptimizer,
     TPEOracle,
+    Trial,
     anytime_moss_index,
     config_to_key,
     key_to_config,
+    stosoo,
 )
 from imabo.oracles.mutate_kl_tpe_oracle import kl_ucb
 from imabo.oracles.tpe_oracle import lcb
@@ -365,7 +374,7 @@ class TestSpaceFunction:
 
         untouched = Trial(random.Random(9))
         self.fn(untouched)
-        assert first == untouched.values
+        assert first == untouched.params
 
     def test_it_drives_a_full_optimization(self):
         opt = IMABO(self.fn, IMOSS(beta=0.5, n_warmup=5), TPEOracle(), seed=0)
@@ -389,6 +398,39 @@ class TestSpaceFunction:
             opt.suggest()
             opt.observe(0.5)
         assert opt.best_config is not None
+
+
+class TestOptunaAlignment:
+    """`Trial` mirrors Optuna's, so a copied objective works unchanged."""
+
+    def test_step_is_accepted_like_optuna(self):
+        from optuna.distributions import FloatDistribution, IntDistribution
+
+        def space(trial):
+            trial.suggest_float("grid", 0.0, 1.0, step=0.25)
+            trial.suggest_int("even", 2, 10, step=2)
+
+        built = SearchSpace(space)
+        assert built.distributions["grid"] == FloatDistribution(0.0, 1.0, step=0.25)
+        assert built.distributions["even"] == IntDistribution(2, 10, step=2)
+
+        rng = random.Random(0)
+        drawn = [built.sample(rng) for _ in range(200)]
+        assert {c["grid"] for c in drawn} <= {0.0, 0.25, 0.5, 0.75, 1.0}
+        assert {c["even"] for c in drawn} <= {2, 4, 6, 8, 10}
+
+    def test_the_log_step_conflict_is_optunas_own(self):
+        def space(trial):
+            trial.suggest_float("x", 1e-3, 1.0, step=0.1, log=True)
+
+        with pytest.raises(ValueError, match="step"):
+            SearchSpace(space)
+
+    def test_trial_uses_optunas_attribute_names(self):
+        trial = Trial(random.Random(0))
+        trial.suggest_float("x", 0.0, 1.0)
+        assert set(trial.params) == {"x"}
+        assert set(trial.distributions) == {"x"}
 
 
 class TestInMemoryStorage:
@@ -884,4 +926,65 @@ class TestMemoryBackedOracles:
         assert len(opt.memory.get_decisions()) > 20, "decisions did not survive"
         assert credits is not None and credits.t > 20, "credits did not survive"
         assert opt.best_config["model"] == "b", "the run did not converge across restarts"
+
+
+class TestBaselines:
+    """The paper's baselines, exposed from the library and driven like IMABO."""
+
+    FLAT = {
+        "a": {"lower": 0.0, "upper": 1.0},
+        "b": {"choices": [1, 2, 3]},
+        "c": {"lower": 1, "upper": 9, "int": True},
+    }
+    @staticmethod
+    def function(trial):
+        trial.suggest_float("a", 0.0, 1.0)
+        trial.suggest_categorical("b", [1, 2, 3])
+        trial.suggest_int("c", 1, 9)
+
+    ALL = [
+        ("RandomSearch", lambda s: RandomSearch(s, seed=1)),
+        ("QRM2", lambda s: QRM2(s, seed=1)),
+        ("UCBAIR", lambda s: UCBAIR(s, seed=1)),
+        ("MOSSAIR", lambda s: MOSSAIR(s, seed=1)),
+        ("HierMAB", lambda s: HierMAB(s, n_points=6, seed=1)),
+        ("OptunaBandit", lambda s: OptunaBandit(s, seed=1)),
+    ]
+
+    def _drive(self, optimizer, n=25):
+        configs = []
+        for _ in range(n):
+            if getattr(optimizer, "done", False):
+                break
+            configs.append(optimizer.suggest())
+            optimizer.observe(0.5)
+        return configs
+
+    @pytest.mark.parametrize("name,make", ALL)
+    def test_every_baseline_drives_like_imabo(self, name, make):
+        """suggest() / observe(reward) / best_config -- the same loop as IMABO."""
+        optimizer = make(self.FLAT)
+        configs = self._drive(optimizer)
+        assert configs and all(isinstance(c, dict) for c in configs)
+        assert hasattr(optimizer, "best_config")
+
+    @pytest.mark.parametrize("name,make", ALL)
+    def test_a_prebuilt_search_space_is_accepted(self, name, make):
+        assert self._drive(make(SearchSpace(self.FLAT)))
+
+    @pytest.mark.parametrize("name,make", ALL)
+    def test_a_suggestion_function_is_accepted(self, name, make):
+        assert self._drive(make(self.function))
+
+    def test_the_tree_search_generators_are_exported(self):
+        """They work on [0, 1]**d, driven through TimedOptimizer as the experiments do."""
+        random.seed(0)
+        optimizer = TimedOptimizer(stosoo, 60, 2)
+        served = 0
+        while not optimizer.done and served < 60:
+            x = optimizer.suggest()
+            assert len(x) == 2 and all(0.0 <= v <= 1.0 for v in x)
+            optimizer.observe(x, 0.5)
+            served += 1
+        assert served > 0
 

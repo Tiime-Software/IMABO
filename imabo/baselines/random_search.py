@@ -6,48 +6,36 @@ space; it never re-pulls a config and keeps no bandit state. ``best_config``
 returns the configuration with the highest *mean* observed reward.
 """
 
-import math
 import random
 from collections import defaultdict
 from typing import Any, Optional
 
-from optuna.distributions import (
-    CategoricalDistribution,
-    FloatDistribution,
-    IntDistribution,
-)
-
-from imabo import SearchSpace
 from imabo.memory import config_to_key, key_to_config
+from imabo.search_space import SearchSpace
 
 
 class RandomSearch:
     """Uniform random search over an IMABO-style search space."""
 
     def __init__(self, search_space: dict[str, Any], seed: int | None = 42, **kwargs):
-        self.param_names = list(sorted(search_space.keys()))
-        self.distributions = SearchSpace(search_space).distributions
+        # A dict, a suggestion function, or a ready-made SearchSpace: the same forms
+        # IMABO accepts.
+        self.space = (
+            search_space
+            if isinstance(search_space, SearchSpace)
+            else SearchSpace(search_space)
+        )
+        self.param_names = self.space.names
+        self.distributions = self.space.distributions
         self.rng = random.Random(seed)
         # config-key -> list of observed rewards
         self._rewards: dict = defaultdict(list)
         self._last: Optional[dict[str, Any]] = None
 
     def _sample(self) -> dict[str, Any]:
-        config: dict[str, Any] = {}
-        for name in self.param_names:
-            dist = self.distributions[name]
-            if isinstance(dist, FloatDistribution):
-                if dist.log:
-                    config[name] = math.exp(
-                        self.rng.uniform(math.log(dist.low), math.log(dist.high))
-                    )
-                else:
-                    config[name] = self.rng.uniform(dist.low, dist.high)
-            elif isinstance(dist, IntDistribution):
-                config[name] = self.rng.randint(dist.low, dist.high)
-            elif isinstance(dist, CategoricalDistribution):
-                config[name] = self.rng.choice(dist.choices)
-        return config
+        """A draw from ``P0``: the same generator and the same order, delegated to the
+        space instead of repeating its type ladder here."""
+        return self.space.sample(self.rng)
 
     def suggest(self) -> dict[str, Any]:
         self._last = self._sample()

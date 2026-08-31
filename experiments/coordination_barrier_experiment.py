@@ -55,8 +55,8 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from experiments.baselines.hier_mab import HierMAB
-from experiments.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
+from imabo.baselines.hier_mab import HierMAB
+from imabo.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
 from imabo import IMOSSTPE, IMOSSRandom
 
 RESULT_DIR = Path(__file__).parent.parent / "results" / "coordination_barrier"
