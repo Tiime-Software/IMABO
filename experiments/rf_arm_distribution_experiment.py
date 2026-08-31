@@ -8,7 +8,8 @@ so reruns skip finished seeds.
 Reproduce (each command resumable; the surrogate-free baselines are shared by
 both foundation-model figures):
 
-    # run everything (all algorithms x all benchmarks), then plot both figures:
+    # run everything (all algorithms x all benchmarks), then plot the
+    # foundation-free figures (landscape grid + regret/oracle grid):
     python -m experiments.rf_arm_distribution_experiment
 
     # run a single method:
@@ -19,8 +20,17 @@ both foundation-model figures):
     python -m experiments.rf_arm_distribution_experiment \
         --algorithm IMOSS-TabPFN --fit-granularity pull
 
-    # only (re)plot a foundation model's figure from existing result JSONs:
+    # only (re)plot from existing result JSONs -- the foundation-free figures:
+    python -m experiments.rf_arm_distribution_experiment --plot-only
+
+    # ...plus a foundation model's two surrogate MSE grids:
     python -m experiments.rf_arm_distribution_experiment --plot-only --foundation tabpfn
+
+    # ...and with that foundation's series overlaid on the regret + oracle grid
+    # (written to '..._regret_and_oracle_grid_tabpfn.pdf', leaving the plain
+    # foundation-free one the main body embeds untouched):
+    python -m experiments.rf_arm_distribution_experiment --plot-only \
+        --foundation tabpfn --foundation-series
 
 The TabPFN arm needs the experiment extra (``pip install -e ".[experiments]"``).
 """
@@ -365,8 +375,8 @@ def run_single_experiment(
             # accuracy across the candidate space), not just at its picks.
             probe_pool: list[tuple[Any, float]] = []
             if hasattr(shadow.oracle, "on_candidates_scored"):
-                shadow.oracle.on_candidates_scored = lambda cands, preds: probe_pool.extend(
-                    zip(cands, preds)
+                shadow.oracle.on_candidates_scored = (
+                    lambda cands, preds: probe_pool.extend(zip(cands, preds))
                 )
 
             shadow_configs = [_oracle_propose(shadow) for _ in range(n_shadow)]
@@ -621,20 +631,34 @@ _DEFAULT_ALGORITHMS = [
 def make_plots(
     benchmarks,
     n_iterations,
-    foundation: str = "tabpfn",
+    foundation: str | None = None,
     fit_granularity: str = "arm",
     save_fig: bool = True,
     acquisition: str = "quantile",
     quantile: float = 0.99,
+    foundation_series: bool = False,
 ) -> None:
-    """Draw the paper's RF figures for one foundation-model oracle: the static
-    reward-landscape structure grid (benchmark-only), the combined
-    cumulative-regret + oracle-proposal-quality grid, the surrogate
-    suggested-config MSE grid, and the surrogate candidate-pool MSE grid.
+    """Draw the paper's RF figures: the static reward-landscape structure grid
+    (benchmark-only), the combined cumulative-regret + oracle-proposal-quality
+    grid, and -- for a foundation-model oracle -- the surrogate suggested-config
+    and candidate-pool MSE grids.
 
-    ``foundation`` selects the foundation-model series ("tabfm" or "tabpfn");
-    the three surrogate-free baselines are shared by both figures. For "tabpfn"
-    with ``fit_granularity="pull"``, ``acquisition="quantile"`` and/or a
+    The first two figures are foundation-INDEPENDENT: the paper's regret grid
+    compares the surrogate-free IMOSS family against UCB-AIR and Hier-MAB, with
+    no foundation-model series, so it is drawn once under the plain
+    ``regret_and_oracle_grid`` name (the one aaai_files/hpo_rf.tex and
+    arxiv_files/hpo_rf.tex embed). Drawing it once per foundation, as this used
+    to, only produced byte-identical duplicates under different names.
+
+    ``foundation`` ("tabfm" or "tabpfn", or None) selects the foundation-model
+    series and gates the two MSE grids, which are the only figures that
+    intrinsically need one. Pass ``foundation_series=True`` to ALSO overlay that
+    series on the regret + oracle grid; because that changes the figure's
+    content, it is then written to the foundation-tagged
+    ``regret_and_oracle_grid_{foundation}{suffix}`` name instead, so it never
+    overwrites the foundation-free version the main body uses.
+
+    For "tabpfn" with ``fit_granularity="pull"``, ``acquisition="ucb"`` and/or a
     non-default ``quantile``, the variant series and suffixed filenames
     (``..._pull``/``..._q0.975``/``..._ucb_q0.99``) are used, so they sit next
     to (never overwrite) the default per-arm q=0.99 quantile ones.
@@ -654,49 +678,65 @@ def make_plots(
         plot_landscape_heatmap_grid,
     )
 
-    is_tabpfn = foundation == "tabpfn"
-    is_pull = is_tabpfn and fit_granularity == "pull"
-    fm_label = (
-        "IMOSS-TabPFN-pull"
-        if is_pull
-        else "IMOSS-TabPFN" if is_tabpfn else "IMOSS-TabFM"
-    )
-    suffix = "_pull" if is_pull else ""
-    if is_tabpfn and acquisition == "ucb":
-        variant = f"ucb_q{quantile:g}"
-    elif is_tabpfn and acquisition == "quantile" and quantile != 0.99:
-        variant = f"q{quantile:g}"
-    else:
-        variant = None
-    if variant is not None:
-        fm_label += f"-{variant}"
-        suffix += f"_{variant}"
-        # Register the variant's slug -> display label so every loader that
-        # globs result files (they map slugs through _PRETTY_LABELS) picks the
-        # variant series up under a readable name.
-        from experiments.utils.plots.plot_configs import _PRETTY_LABELS
+    if foundation_series and foundation is None:
+        raise ValueError(
+            "foundation_series=True needs a foundation ('tabfm' or 'tabpfn') to "
+            "say WHICH series to overlay on the regret + oracle grid."
+        )
 
-        _PRETTY_LABELS[
-            algo_slug(Algorithm.IMOSS_TABPFN, fit_granularity, acquisition, quantile)
-        ] = fm_label
+    is_tabpfn = foundation == "tabpfn"
+    fm_label: str | None = None
+    suffix = ""
+    if foundation is not None:
+        is_pull = is_tabpfn and fit_granularity == "pull"
+        fm_label = (
+            "IMOSS-TabPFN-pull"
+            if is_pull
+            else "IMOSS-TabPFN" if is_tabpfn else "IMOSS-TabFM"
+        )
+        suffix = "_pull" if is_pull else ""
+        if is_tabpfn and acquisition == "ucb":
+            variant = f"ucb_q{quantile:g}"
+        elif is_tabpfn and acquisition == "quantile" and quantile != 0.99:
+            variant = f"q{quantile:g}"
+        else:
+            variant = None
+        if variant is not None:
+            fm_label += f"-{variant}"
+            suffix += f"_{variant}"
+            # Register the variant's slug -> display label so every loader that
+            # globs result files (they map slugs through _PRETTY_LABELS) picks the
+            # variant series up under a readable name.
+            from experiments.utils.plots.plot_configs import _PRETTY_LABELS
+
+            _PRETTY_LABELS[
+                algo_slug(
+                    Algorithm.IMOSS_TABPFN, fit_granularity, acquisition, quantile
+                )
+            ] = fm_label
     # Hier-MAB's per-run JSONs are produced by factored_baseline_experiment.py
     # (same directory, filename scheme, and seed pairing); it has no proposal
     # oracle, so like UCB-AIR it appears only in the regret row. IMOSS-TPE-univ
     # (multivariate=False) has stored runs but is not part of the paper figure.
     regret_algos = [
         "IMOSS-Random",
-        # "IMOSS-TPE",
+        "IMOSS-TPE",
         "IMOSS-mutate-KLxTPE",
-        fm_label,
         "UCB-AIR",
         "Hier-MAB",
     ]
     oracle_algos = [
         "IMOSS-Random",
-        # "IMOSS-TPE",
+        "IMOSS-TPE",
         "IMOSS-mutate-KLxTPE",
-        fm_label,
     ]
+    # Opt-in foundation overlay. List order is irrelevant here -- both lists go
+    # through plot_configs._ordered, which re-sorts by _CANONICAL_ORDER (and
+    # silently DROPS anything missing from it), so fm_label must be a name
+    # listed there.
+    if foundation_series:
+        regret_algos.append(fm_label)
+        oracle_algos.append(fm_label)
 
     print("Generating RF reward-landscape structure grid (benchmark-only)...")
     plot_landscape_heatmap_grid(
@@ -704,15 +744,28 @@ def make_plots(
         save_fig=save_fig,
     )
 
-    print(f"Generating combined regret + oracle-proposal-quality grid ({fm_label})...")
+    # Foundation-free content -> the plain, stable name the main-body LaTeX
+    # embeds; with the overlay the content differs, so it gets its own file.
+    grid_name = (
+        f"regret_and_oracle_grid_{foundation}{suffix}"
+        if foundation_series
+        else "regret_and_oracle_grid"
+    )
+    print(
+        "Generating combined regret + oracle-proposal-quality grid "
+        f"({'with ' + fm_label if foundation_series else 'surrogate-free'})..."
+    )
     plot_regret_and_oracle_grid(
         benchmarks=benchmarks,
         n_iterations=n_iterations,
         save_fig=save_fig,
         regret_algorithms=regret_algos,
         oracle_algorithms=oracle_algos,
-        out_name=f"regret_and_oracle_grid_{foundation}{suffix}",
+        out_name=grid_name,
     )
+
+    if foundation is None:
+        return  # the MSE grids below are intrinsically per-foundation
 
     print(f"Generating {foundation} suggested-config MSE grid...")
     _plot_suggestion_metric_grid(
@@ -810,8 +863,22 @@ def _parse_args() -> argparse.Namespace:
         choices=["tabfm", "tabpfn"],
         default=None,
         help=(
-            "which foundation-model figure to (re)plot; default: inferred from "
-            "--algorithm, or both when --algorithm all."
+            "which foundation-model MSE grids to (re)plot; default: inferred "
+            "from --algorithm, and none for --algorithm all (the regret + "
+            "oracle grid carries no foundation series unless "
+            "--foundation-series is passed)."
+        ),
+    )
+    p.add_argument(
+        "--foundation-series",
+        action="store_true",
+        help=(
+            "also overlay the foundation-model series on the regret + oracle "
+            "grid (off by default: the paper's main-body figure is "
+            "surrogate-free). Needs a foundation -- from --foundation or a "
+            "foundation --algorithm. Writes the foundation-tagged "
+            "'..._regret_and_oracle_grid_<foundation>.pdf' instead of "
+            "overwriting the plain one the main body embeds."
         ),
     )
     p.add_argument(
@@ -903,23 +970,27 @@ if __name__ == "__main__":
         args.plot or args.plot_only or args.algorithm == "all"
     )
     if want_plot:
+        # A foundation now only ADDS the two MSE grids (and, with
+        # --foundation-series, an overlay on the regret grid), so "all" asks for
+        # none: it used to request both and draw every figure twice, the second
+        # pass differing from the first only in filename. A surrogate-free
+        # --algorithm now still draws the foundation-free figures, which it
+        # previously skipped entirely.
         if args.foundation is not None:
-            foundations = [args.foundation]
-        elif args.algorithm == "all":
-            foundations = ["tabfm", "tabpfn"]
+            foundation = args.foundation
         elif args.algorithm == Algorithm.IMOSS_TABFM.value:
-            foundations = ["tabfm"]
+            foundation = "tabfm"
         elif args.algorithm == Algorithm.IMOSS_TABPFN.value:
-            foundations = ["tabpfn"]
+            foundation = "tabpfn"
         else:
-            foundations = []  # a surrogate-free run defines no figure on its own
-        for foundation in foundations:
-            make_plots(
-                bench_tags,
-                n_iter,
-                foundation=foundation,
-                fit_granularity=args.fit_granularity,
-                save_fig=True,
-                acquisition=args.acquisition,
-                quantile=args.quantile,
-            )
+            foundation = None
+        make_plots(
+            bench_tags,
+            n_iter,
+            foundation=foundation,
+            fit_granularity=args.fit_granularity,
+            save_fig=True,
+            acquisition=args.acquisition,
+            quantile=args.quantile,
+            foundation_series=args.foundation_series,
+        )

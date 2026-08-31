@@ -20,6 +20,7 @@ from experiments.utils.plots.plot_configs import (
     _style_for,
     adaptive_label_fontsize,
     create_figure_legend,
+    display_name,
     get_algorithm_color,
     paper_style,
     save_figure,
@@ -40,7 +41,7 @@ _ORACLE_LABELS = {
     "IMOSS-TPE-univ": "TPE-univ",
     "IMOSS-TabFM": "TabFM",
     "IMOSS-TabPFN": "TabPFN",
-    "IMOSS-mutate-KLxTPE": "mutate-KLxTPE",
+    "IMOSS-mutate-KLxTPE": "mutate-KLxPE",
 }
 
 # Per-series linestyle overrides (color+marker come from algorithm_style):
@@ -1853,15 +1854,29 @@ def plot_regret_and_oracle_grid(
     for ax in list(axes_top) + list(axes_bottom):
         ax.label_outer()
 
-    # Top legend: full algorithm names, for the cumulative-regret row.
+    # Top legend: full algorithm names, for the cumulative-regret row. Rendered
+    # via display_name so the printed label comes from the one shared override
+    # map (plot_configs.DISPLAY_NAME_OVERRIDES) instead of the raw identity --
+    # the identity strings stay untouched here, since _ordered/_style_for/
+    # _PRETTY_LABELS/_CANONICAL_ORDER all match on them.
+    #
+    # handlelength/columnspacing/handletextpad below the matplotlib defaults
+    # (2.0/2.0/0.8): with a foundation series overlaid (six entries, see
+    # rf_arm_distribution_experiment.make_plots' foundation_series) the legend
+    # at default spacing renders 7.34in wide in a 7.0in figure, and
+    # bbox_inches="tight" then grows the saved PDF to ~7.58in -- shrinking every
+    # font ~8% once embedded at width=\textwidth. Trimming the handles and gaps
+    # buys the width back without touching the shared legend_fontsize.
+    _LEGEND_SPACING = dict(handlelength=1.4, columnspacing=1.0, handletextpad=0.5)
     ordered_top = _ordered(seen_top.keys())
     create_figure_legend(
         fig,
         [seen_top[a] for a in ordered_top],
-        ordered_top,
+        [display_name(a) for a in ordered_top],
         ncol=top_ncol,
         bbox_y=1.0 if top_rows == 1 else 1.0 + 0.03 * (top_rows - 1),
         fontsize=style.legend_fontsize,
+        **_LEGEND_SPACING,
     )
 
     plt.tight_layout(
@@ -1884,6 +1899,9 @@ def plot_regret_and_oracle_grid(
         bbox_y=mid_pos.y0 + mid_pos.height / 2,
         loc="center",
         fontsize=style.legend_fontsize,
+        # Same spacing as the top legend: the two sit in one figure, so their
+        # handle samples have to be the same length to read as one system.
+        **_LEGEND_SPACING,
     )
 
     if save_fig:
