@@ -14,7 +14,7 @@ from imabo.baselines.hier_mab import HierMAB
 from imabo.baselines.optuna_bandit import OptunaBandit
 from imabo.baselines.qrm2 import QRM2
 from imabo.baselines.random_search import RandomSearch
-from imabo.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
+from imabo.baselines.tree import TimedOptimizer, hoo_t, stosoo, stroquool
 from imabo.baselines.ucb_air import MOSSAIR, UCBAIR
 
 __all__ = [

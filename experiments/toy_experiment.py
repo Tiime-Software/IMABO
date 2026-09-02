@@ -20,7 +20,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from imabo.baselines.hier_mab import HierMAB
-from imabo.baselines.stroquool import TimedOptimizer, hoo_t, stosoo, stroquool
+from imabo.baselines.tree import TimedOptimizer, hoo_t, stosoo, stroquool
 from experiments.benchmarks.toys.toy_functions import ObjectiveFunctions
 from experiments.utils.stats import (
     calculate_statistics,
