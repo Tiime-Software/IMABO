@@ -2,7 +2,7 @@
 
 IMABO is a Python framework for online hyperparameter optimization: choosing the configuration to serve on each request, and learning from the reward it returns. It combines any bandit policy for choosing among the configurations already tried with any oracle for proposing new ones.
 
-This repository contains the `imabo` package itself, plus every experiment, baseline, and plotting script used to produce the results in the paper.
+This repository contains the `imabo` package itself, plus every experiment, baseline, and plotting script used to produce the results in the paper: [**Bandits in Prod: Hyperparameter Optimization at Inference Time**](https://arxiv.org/abs/2609.01335).
 
 ## Installation
 
@@ -352,4 +352,20 @@ This builds a container with a Python 3.7 conda env and the vendored `HPOBench/`
 ```bash
 pip install -e ".[dev]"
 pytest
+```
+
+## Citation
+
+If you use this work, please cite the paper:
+
+```bibtex
+@misc{abraham2026banditsprodhyperparameteroptimization,
+      title={Bandits in Prod: Hyperparameter Optimization at Inference Time},
+      author={Louis Abraham and Tuan-Anh Nguyen and Nicolas Devatine},
+      year={2026},
+      eprint={2609.01335},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2609.01335},
+}
 ```
